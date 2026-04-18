@@ -371,14 +371,14 @@
            rc-slots (fuzz-rc-slots)
            weak-slots (fuzz-weak-slots)
            base-seed (fuzz-base-seed)
-           stride (fuzz-seed-stride)]
-    (FuzzHarness.run-suite
-      runs
-      steps-per-run
-      base-seed
-      stride
-      &(fn [seed steps]
-         (run-fuzz-once seed steps rc-slots weak-slots)))))
+           stride (fuzz-seed-stride)
+           total 0]
+    (do
+      (for [run 0 runs]
+        (let [seed (+ base-seed (* stride (Double.from-int run)))
+              executed (run-fuzz-once seed steps-per-run rc-slots weak-slots)]
+          (set! total (+ total executed))))
+      total)))
 
 (defn run-fuzz-suite! []
   (ignore (run-fuzz-suite)))
