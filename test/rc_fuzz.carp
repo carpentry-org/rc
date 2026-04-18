@@ -1,0 +1,390 @@
+(load "Test.carp")
+(use Test)
+(load "fuzz_harness.carp")
+(load "../rc.carp")
+
+(Rc.define RcString String)
+
+(FuzzHarness.configure-build)
+
+(defn assert-memory-balance [state f expected-balance descr]
+  (do
+    (Debug.reset-memory-balance!)
+    (f)
+    (assert-equal state expected-balance (Debug.memory-balance) descr)))
+
+(def DEFAULT-FUZZ-RUNS 12)
+(def DEFAULT-FUZZ-STEPS 400)
+(def DEFAULT-RC-SLOTS 8)
+(def DEFAULT-WEAK-SLOTS 8)
+(def DEFAULT-FUZZ-BASE-SEED 1001.0)
+(def DEFAULT-FUZZ-SEED-STRIDE 9973.0)
+(def MAX-FUZZ-RUNS 100000)
+(def MAX-FUZZ-STEPS 200000)
+(def MAX-RC-SLOTS 10000)
+(def MAX-WEAK-SLOTS 10000)
+
+(defn fuzz-runs []
+  (FuzzHarness.getenv-int-bounded "RC_FUZZ_RUNS" DEFAULT-FUZZ-RUNS 1 MAX-FUZZ-RUNS))
+
+(defn fuzz-steps []
+  (FuzzHarness.getenv-int-bounded "RC_FUZZ_STEPS" DEFAULT-FUZZ-STEPS 1 MAX-FUZZ-STEPS))
+
+(defn fuzz-rc-slots []
+  (FuzzHarness.getenv-int-bounded "RC_FUZZ_RC_SLOTS" DEFAULT-RC-SLOTS 1 MAX-RC-SLOTS))
+
+(defn fuzz-weak-slots []
+  (FuzzHarness.getenv-int-bounded "RC_FUZZ_WEAK_SLOTS" DEFAULT-WEAK-SLOTS 1 MAX-WEAK-SLOTS))
+
+(defn fuzz-seed-stride []
+  (FuzzHarness.getenv-double "RC_FUZZ_SEED_STRIDE" DEFAULT-FUZZ-SEED-STRIDE))
+
+(defn fuzz-base-seed []
+  (match (IO.getenv "RC_FUZZ_BASE_SEED")
+    (Maybe.Just raw)
+      (match (Double.from-string &raw)
+        (Maybe.Just value) value
+        (Maybe.Nothing) DEFAULT-FUZZ-BASE-SEED)
+    (Maybe.Nothing)
+      (if (FuzzHarness.getenv-bool "RC_FUZZ_RANDOM_SEED" false)
+        (Double.from-uint64 (System.nanotime))
+        DEFAULT-FUZZ-BASE-SEED)))
+
+(defn rc-none []
+  (the (Maybe RcString) (Maybe.Nothing)))
+
+(defn weak-none []
+  (the (Maybe RcStringWeak) (Maybe.Nothing)))
+
+(defn random-rc-index [rcs]
+  (Int.random-between 0 (Array.length rcs)))
+
+(defn random-weak-index [wks]
+  (Int.random-between 0 (Array.length wks)))
+
+(defn random-payload []
+  (fmt "payload-%d-%d"
+    (Int.random-between 0 1000000)
+    (Int.random-between 0 1000000)))
+
+(defn op-new-rc [rcs]
+  (let [i (random-rc-index rcs)]
+    (aset! rcs i (Maybe.Just (RcString.new (random-payload))))))
+
+(defn op-clone-rc [rcs]
+  (let [src (random-rc-index rcs)
+        dst (random-rc-index rcs)]
+    (match @(Array.unsafe-nth rcs src)
+      (Maybe.Just rc) (aset! rcs dst (Maybe.Just (RcString.clone &rc)))
+      (Maybe.Nothing) ())))
+
+(defn op-drop-rc [rcs]
+  (let [i (random-rc-index rcs)]
+    (aset! rcs i (rc-none))))
+
+(defn op-downgrade [rcs wks]
+  (let [src (random-rc-index rcs)
+        dst (random-weak-index wks)]
+    (match @(Array.unsafe-nth rcs src)
+      (Maybe.Just rc) (aset! wks dst (Maybe.Just (RcString.downgrade &rc)))
+      (Maybe.Nothing) ())))
+
+(defn op-clone-weak [wks]
+  (let [src (random-weak-index wks)
+        dst (random-weak-index wks)]
+    (match @(Array.unsafe-nth wks src)
+      (Maybe.Just w) (aset! wks dst (Maybe.Just (RcStringWeak.clone &w)))
+      (Maybe.Nothing) ())))
+
+(defn op-drop-weak [wks]
+  (let [i (random-weak-index wks)]
+    (aset! wks i (weak-none))))
+
+(defn op-new-weak [wks]
+  (let [i (random-weak-index wks)]
+    (aset! wks i (Maybe.Just (RcStringWeak.new)))))
+
+(defn op-upgrade [rcs wks]
+  (let [src (random-weak-index wks)
+        dst (random-rc-index rcs)]
+    (match @(Array.unsafe-nth wks src)
+      (Maybe.Just w)
+        (match (RcStringWeak.upgrade &w)
+          (Maybe.Just rc) (aset! rcs dst (Maybe.Just rc))
+          (Maybe.Nothing) ())
+      (Maybe.Nothing) ())))
+
+(defn op-make-unique [rcs]
+  (let [i (random-rc-index rcs)]
+    (Array.aupdate! rcs i
+      &(fn [slot]
+        (match slot
+          (Maybe.Nothing) (rc-none)
+          (Maybe.Just rc) (Maybe.Just (RcString.make-unique rc)))))))
+
+(defn op-try-unwrap [rcs]
+  (let [i (random-rc-index rcs)]
+    (Array.aupdate! rcs i
+      &(fn [slot]
+        (match slot
+          (Maybe.Nothing) (rc-none)
+          (Maybe.Just rc)
+            (match (RcString.try-unwrap rc)
+              (Result.Success value)
+                (do
+                  (ignore value)
+                  (rc-none))
+              (Result.Error rc-back)
+                (Maybe.Just rc-back)))))))
+
+(defn op-probe-rc-ptr-eq [rcs]
+  (let [i (random-rc-index rcs)
+        j (random-rc-index rcs)]
+    (match @(Array.unsafe-nth rcs i)
+      (Maybe.Just a)
+        (match @(Array.unsafe-nth rcs j)
+          (Maybe.Just b) (ignore (RcString.ptr-eq &a &b))
+          (Maybe.Nothing) ())
+      (Maybe.Nothing) ())))
+
+(defn op-probe-weak-ptr-eq [wks]
+  (let [i (random-weak-index wks)
+        j (random-weak-index wks)]
+    (match @(Array.unsafe-nth wks i)
+      (Maybe.Just a)
+        (match @(Array.unsafe-nth wks j)
+          (Maybe.Just b) (ignore (RcStringWeak.ptr-eq &a &b))
+          (Maybe.Nothing) ())
+      (Maybe.Nothing) ())))
+
+(defn op-unwrap-or-clone [rcs]
+  (let [i (random-rc-index rcs)]
+    (Array.aupdate! rcs i
+      &(fn [slot]
+        (match slot
+          (Maybe.Nothing) (rc-none)
+          (Maybe.Just rc)
+            (do
+              (ignore (RcString.unwrap-or-clone rc))
+              (rc-none)))))))
+
+(defn op-clone-burst [rcs]
+  (let [src (random-rc-index rcs)]
+    (match @(Array.unsafe-nth rcs src)
+      (Maybe.Just rc)
+        (for [i 0 3]
+          (do
+            (ignore i)
+            (aset! rcs (random-rc-index rcs) (Maybe.Just (RcString.clone &rc)))))
+      (Maybe.Nothing) ())))
+
+(defn op-downgrade-burst [rcs wks]
+  (let [src (random-rc-index rcs)]
+    (match @(Array.unsafe-nth rcs src)
+      (Maybe.Just rc)
+        (for [i 0 3]
+          (do
+            (ignore i)
+            (aset! wks (random-weak-index wks) (Maybe.Just (RcString.downgrade &rc)))))
+      (Maybe.Nothing) ())))
+
+(defn op-clear-rcs [rcs]
+  (for [i 0 (Array.length rcs)]
+    (aset! rcs i (rc-none))))
+
+(defn op-clear-rcs-except [rcs keep]
+  (for [i 0 (Array.length rcs)]
+    (if (= i keep)
+      ()
+      (aset! rcs i (rc-none)))))
+
+(defn op-clear-weaks [wks]
+  (for [i 0 (Array.length wks)]
+    (aset! wks i (weak-none))))
+
+(defn op-unwrap [rcs]
+  (let [i (random-rc-index rcs)]
+    (do
+      (op-clear-rcs-except rcs i)
+      (Array.aupdate! rcs i
+        &(fn [slot]
+          (match slot
+            (Maybe.Nothing) (rc-none)
+            (Maybe.Just rc)
+              (if (= (RcString.strong-count &rc) 1l)
+                (do
+                  (ignore (RcString.unwrap rc))
+                  (rc-none))
+                (Maybe.Just rc))))))))
+
+(defn fuzz-step [rcs wks]
+  (let [op (Int.random-between 0 18)]
+    (cond
+      (= op 0) (op-new-rc rcs)
+      (= op 1) (op-clone-rc rcs)
+      (= op 2) (op-drop-rc rcs)
+      (= op 3) (op-downgrade rcs wks)
+      (= op 4) (op-clone-weak wks)
+      (= op 5) (op-drop-weak wks)
+      (= op 6) (op-upgrade rcs wks)
+      (= op 7) (op-make-unique rcs)
+      (= op 8) (op-try-unwrap rcs)
+      (= op 9) (op-probe-rc-ptr-eq rcs)
+      (= op 10) (op-probe-weak-ptr-eq wks)
+      (= op 11) (op-unwrap-or-clone rcs)
+      (= op 12) (op-clone-burst rcs)
+      (= op 13) (op-downgrade-burst rcs wks)
+      (= op 14) (op-clear-rcs rcs)
+      (= op 15) (op-clear-weaks wks)
+      (= op 16) (op-new-weak wks)
+      (= op 17) (op-unwrap rcs)
+      ())))
+
+(defn check-rc-invariants [rcs]
+  (for [i 0 (Array.length rcs)]
+    (match @(Array.unsafe-nth rcs i)
+      (Maybe.Nothing) ()
+      (Maybe.Just rc)
+        (do
+          (let [sc (RcString.strong-count &rc)]
+            (assert (> sc 0l))
+            (assert (= (RcString.unique? &rc) (= sc 1l))))
+          (let [w (RcString.downgrade &rc)
+                sc-before (RcString.strong-count &rc)]
+            (do
+              (assert (>= (RcStringWeak.weak-count &w) 1l))
+              (match (RcStringWeak.upgrade &w)
+                (Maybe.Just rc2)
+                  (do
+                    (assert (RcString.ptr-eq &rc &rc2))
+                    (assert (= (RcString.strong-count &rc2) (Long.inc sc-before))))
+                (Maybe.Nothing) (assert false))))))))
+
+(defn check-weak-invariants [wks]
+  (for [i 0 (Array.length wks)]
+    (match @(Array.unsafe-nth wks i)
+      (Maybe.Nothing) ()
+      (Maybe.Just w)
+        (let [wc (RcStringWeak.weak-count &w)
+              sc-before (RcStringWeak.strong-count &w)]
+          (do
+            (if (= wc 0l)
+              (do
+                (assert (= sc-before 0l))
+                (assert (Maybe.nothing? &(RcStringWeak.upgrade &w))))
+              (do
+                (assert (>= wc 1l))
+                (match (RcStringWeak.upgrade &w)
+                  (Maybe.Just rc)
+                    (do
+                      (assert (> sc-before 0l))
+                      (assert (= (RcString.strong-count &rc) (Long.inc sc-before))))
+                  (Maybe.Nothing)
+                    (assert (= sc-before 0l)))))
+            (assert (= (RcStringWeak.alive? &w) (not (RcStringWeak.expired? &w))))
+            (assert (= (RcStringWeak.expired? &w)
+                       (= (RcStringWeak.strong-count &w) 0l))))))))
+
+(defn check-rc-pair-invariants [rcs]
+  (let [n (Array.length rcs)]
+    (for [i 0 n]
+      (for [j 0 n]
+        (if (< i j)
+          (match @(Array.unsafe-nth rcs i)
+            (Maybe.Just a)
+              (match @(Array.unsafe-nth rcs j)
+                (Maybe.Just b)
+                  (if (RcString.ptr-eq &a &b)
+                    (do
+                      (assert (= (RcString.strong-count &a) (RcString.strong-count &b)))
+                      (assert (= (RcString.weak-count &a) (RcString.weak-count &b)))
+                      (assert (>= (RcString.strong-count &a) 2l)))
+                    ())
+                (Maybe.Nothing) ())
+            (Maybe.Nothing) ())
+          ())))))
+
+(defn check-weak-pair-invariants [wks]
+  (let [n (Array.length wks)]
+    (for [i 0 n]
+      (for [j 0 n]
+        (if (< i j)
+          (match @(Array.unsafe-nth wks i)
+            (Maybe.Just a)
+              (match @(Array.unsafe-nth wks j)
+                (Maybe.Just b)
+                  (if (RcStringWeak.ptr-eq &a &b)
+                    (do
+                      (assert (= (RcStringWeak.strong-count &a) (RcStringWeak.strong-count &b)))
+                      (assert (= (RcStringWeak.weak-count &a) (RcStringWeak.weak-count &b)))
+                      (let [wc (RcStringWeak.weak-count &a)]
+                        (if (= wc 0l)
+                          (assert (= (RcStringWeak.strong-count &a) 0l))
+                          (assert (>= wc 2l)))))
+                    ())
+                (Maybe.Nothing) ())
+            (Maybe.Nothing) ())
+          ())))))
+
+(defn check-cross-pool-invariants [rcs wks]
+  (for [i 0 (Array.length rcs)]
+    (match @(Array.unsafe-nth rcs i)
+      (Maybe.Nothing) ()
+      (Maybe.Just rc)
+        (let [w (RcString.downgrade &rc)]
+          (for [j 0 (Array.length wks)]
+            (match @(Array.unsafe-nth wks j)
+              (Maybe.Nothing) ()
+              (Maybe.Just wk)
+                (if (RcStringWeak.ptr-eq &w &wk)
+                  (do
+                    (assert (= (RcString.strong-count &rc) (RcStringWeak.strong-count &wk)))
+                    (assert (= (RcString.weak-count &rc) (RcStringWeak.weak-count &wk)))
+                    (assert (not (RcStringWeak.expired? &wk))))
+                  ())))))))
+
+(defn check-invariants [rcs wks]
+  (do
+    (check-rc-invariants rcs)
+    (check-weak-invariants wks)
+    (check-rc-pair-invariants rcs)
+    (check-weak-pair-invariants wks)
+    (check-cross-pool-invariants rcs wks)))
+
+(defn run-fuzz-once [seed steps rc-slots weak-slots]
+  (let-do [rcs (Array.replicate rc-slots &(rc-none))
+           wks (Array.replicate weak-slots &(weak-none))]
+    (FuzzHarness.run-once
+      seed
+      steps
+      &(fn []
+         (do
+           (fuzz-step &rcs &wks)
+           (check-invariants &rcs &wks))))))
+
+(defn run-fuzz-suite []
+  (let-do [runs (fuzz-runs)
+           steps-per-run (fuzz-steps)
+           rc-slots (fuzz-rc-slots)
+           weak-slots (fuzz-weak-slots)
+           base-seed (fuzz-base-seed)
+           stride (fuzz-seed-stride)]
+    (FuzzHarness.run-suite
+      runs
+      steps-per-run
+      base-seed
+      stride
+      &(fn [seed steps]
+         (run-fuzz-once seed steps rc-slots weak-slots)))))
+
+(defn run-fuzz-suite! []
+  (ignore (run-fuzz-suite)))
+
+(deftest test
+  (assert-equal test
+    (* (fuzz-runs) (fuzz-steps))
+    (run-fuzz-suite)
+    "Rc/Weak fuzz loop executes all steps")
+
+  (assert-memory-balance test run-fuzz-suite! 0l "Rc/Weak fuzz loop is memory-balanced")
+)

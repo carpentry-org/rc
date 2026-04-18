@@ -1,0 +1,105 @@
+<!DOCTYPE HTML>
+
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <div class="content">
+            <div class="logo">
+                <a href="https://github.com/carpentry-org/rc">
+                    <img src="">
+                </a>
+                <div class="title">
+                    rc
+                </div>
+                <div class="index">
+                    <ul>
+                        <li>
+                            <a href="Rc.html">
+                                Rc
+                            </a>
+                        </li>
+                        <li>
+                            <a href="Design.html">
+                                Design
+                            </a>
+                        </li>
+                        <li>
+                            <a href="Testing.html">
+                                Testing
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="module">
+                <h1>
+                    Design
+                </h1>
+                <div class="module-description">
+                    <p>Design notes for <code>rc</code>.</p>
+<h2>Overview</h2>
+<p><code>Rc.define</code> macro-generates a concrete strong/weak pair for a payload type.
+For example:</p>
+<pre><code>(Rc.define RcString String)
+</code></pre>
+<p>This yields:</p>
+<ul>
+<li><code>RcString</code> (strong handle)</li>
+<li><code>RcStringWeak</code> (weak handle)</li>
+<li>internal <code>RcStringCell</code> with fields <code>strong</code>, <code>weak</code>, <code>value</code> (<code>Ptr T</code>)</li>
+</ul>
+<p>The generated cell type and low-level helper functions are hidden/private and
+not part of the public API.</p>
+<h2>Semantics</h2>
+<p>Strong operations:</p>
+<ul>
+<li><code>new</code> allocates with <code>strong=1, weak=0</code></li>
+<li><code>copy</code>/<code>clone</code> increments <code>strong</code></li>
+<li><code>delete</code> decrements <code>strong</code></li>
+</ul>
+<p>Weak operations:</p>
+<ul>
+<li><code>Weak.new</code> creates an empty/expired weak handle</li>
+<li><code>downgrade</code> increments <code>weak</code></li>
+<li><code>Weak.copy</code>/<code>Weak.clone</code> increments <code>weak</code></li>
+<li><code>Weak.alive?</code> reports whether <code>strong &gt; 0</code></li>
+<li><code>Weak.upgrade</code> increments <code>strong</code> only when <code>strong &gt; 0</code></li>
+<li><code>Weak.delete</code> decrements <code>weak</code></li>
+</ul>
+<p>Deallocation rule:</p>
+<ul>
+<li>payload drops when <code>strong</code> reaches zero</li>
+<li>control block allocation is freed when both counters reach zero</li>
+</ul>
+<p>Current behavior:</p>
+<ul>
+<li>weak refs keep only the control block alive</li>
+<li><code>Weak.upgrade</code> fails after payload drop (<code>strong == 0</code>)</li>
+</ul>
+<h2>Invariants</h2>
+<ul>
+<li><code>strong &gt;= 0</code></li>
+<li><code>weak &gt;= 0</code></li>
+<li><code>unique?</code> iff <code>strong == 1</code></li>
+<li><code>expired?</code> iff <code>strong == 0</code></li>
+<li><code>alive?</code> iff <code>not expired?</code></li>
+<li><code>upgrade</code> succeeds iff observed <code>strong &gt; 0</code></li>
+</ul>
+<h2>Limits</h2>
+<ul>
+<li>single-threaded only (non-atomic counters)</li>
+<li>no automatic cycle collection (same as Rust <code>Rc</code>/<code>Weak</code>; use <code>Weak</code> to break cycles)</li>
+<li>no lock-free/thread-safe guarantees</li>
+<li>forged handles via <code>Unsafe.coerce</code> are out of contract and may abort in APIs
+that require live payloads</li>
+</ul>
+
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

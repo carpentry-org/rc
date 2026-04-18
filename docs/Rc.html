@@ -1,0 +1,82 @@
+<!DOCTYPE HTML>
+
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <div class="content">
+            <div class="logo">
+                <a href="https://github.com/carpentry-org/rc">
+                    <img src="">
+                </a>
+                <div class="title">
+                    rc
+                </div>
+                <div class="index">
+                    <ul>
+                        <li>
+                            <a href="Rc.html">
+                                Rc
+                            </a>
+                        </li>
+                        <li>
+                            <a href="Design.html">
+                                Design
+                            </a>
+                        </li>
+                        <li>
+                            <a href="Testing.html">
+                                Testing
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="module">
+                <h1>
+                    Rc
+                </h1>
+                <div class="module-description">
+                    <p>Macro-based reference counting for standalone libraries.</p>
+<p>Use <code>Rc.define</code> to generate concrete <code>Rc</code>/<code>Weak</code> types for one payload type.
+The generated types are single-threaded and follow Rust-like <code>Rc</code>/<code>Weak</code>
+drop semantics.</p>
+
+                </div>
+                <div class="binder">
+                    <a class="anchor" href="#define">
+                        <h3 id="define">
+                            define
+                        </h3>
+                    </a>
+                    <div class="description">
+                        macro
+                    </div>
+                    <p class="sig">
+                        Macro
+                    </p>
+                    <pre class="args">
+                        (define name value-type)
+                    </pre>
+                    <p class="doc">
+                        <p>Generate managed <code>Rc</code> and <code>Weak</code> reference-counted types.</p>
+<p>Example:</p>
+<p>(Rc.define RcString String)</p>
+<p>This creates:</p>
+<ul>
+<li>type <code>RcString</code></li>
+<li>type <code>RcStringWeak</code></li>
+<li>module <code>RcString</code> with strong-reference operations</li>
+<li>module <code>RcStringWeak</code> with weak-reference operations</li>
+<li>automatic <code>copy</code> and <code>delete</code> implementations for both.</li>
+</ul>
+
+                    </p>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

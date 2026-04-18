@@ -1,0 +1,89 @@
+<!DOCTYPE HTML>
+
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <div class="content">
+            <div class="logo">
+                <a href="https://github.com/carpentry-org/rc">
+                    <img src="">
+                </a>
+                <div class="title">
+                    rc
+                </div>
+                <div class="index">
+                    <ul>
+                        <li>
+                            <a href="Rc.html">
+                                Rc
+                            </a>
+                        </li>
+                        <li>
+                            <a href="Design.html">
+                                Design
+                            </a>
+                        </li>
+                        <li>
+                            <a href="Testing.html">
+                                Testing
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="module">
+                <h1>
+                    Testing
+                </h1>
+                <div class="module-description">
+                    <p>Testing guidance for <code>rc</code>.</p>
+<h2>Test suites</h2>
+<ul>
+<li><code>test/rc.carp</code>: functional behavior and lifecycle checks</li>
+<li><code>test/rc_fuzz.carp</code>: state-machine fuzzing for <code>RcString</code></li>
+<li><code>test/rc_fuzz_array_string.carp</code>: state-machine fuzzing for <code>RcArrayString</code></li>
+<li><code>test/rc_fuzz_probe.carp</code>: state-machine fuzzing for <code>RcProbe</code></li>
+</ul>
+<h2>Sanitizers</h2>
+<p>Tests enable:</p>
+<ul>
+<li><code>-fsanitize=address</code></li>
+<li><code>-fsanitize=undefined</code></li>
+<li><code>-fno-sanitize-recover=all</code></li>
+<li><code>-fno-omit-frame-pointer</code></li>
+</ul>
+<p>Build controls:</p>
+<ul>
+<li><code>RC_OPT_LEVEL</code> (<code>O0|O1|O2|O3</code>, default <code>O1</code>)</li>
+<li><code>RC_SANITIZE</code> (<code>1|true|yes</code> to enable, <code>0|false|no</code> to disable)</li>
+</ul>
+<h2>Fuzz controls</h2>
+<p>Environment variables:</p>
+<ul>
+<li><code>RC_FUZZ_RUNS</code></li>
+<li><code>RC_FUZZ_STEPS</code></li>
+<li><code>RC_FUZZ_RC_SLOTS</code></li>
+<li><code>RC_FUZZ_WEAK_SLOTS</code></li>
+<li><code>RC_FUZZ_BASE_SEED</code></li>
+<li><code>RC_FUZZ_SEED_STRIDE</code></li>
+<li><code>RC_FUZZ_RANDOM_SEED</code></li>
+</ul>
+<p>Use fixed seed settings for reproducibility and random seeding for broad soak coverage.</p>
+<h2>Practical guidance</h2>
+<ul>
+<li>run functional and fuzz suites under sanitizers</li>
+<li>use <code>./scripts/validate.sh</code> for the full optimization/sanitizer matrix</li>
+<li>run long soaks sequentially (avoid parallel runs sharing one <code>out/main.c</code>)</li>
+<li>record seed/run configuration when investigating failures</li>
+</ul>
+<p>See <code>docs/testing.md</code> for full command recipes.</p>
+
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

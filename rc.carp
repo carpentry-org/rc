@@ -1,0 +1,484 @@
+(posix-only (system-include "pthread.h"))
+(system-include "stdint.h")
+
+(doc Rc "Macro-based reference counting for standalone libraries.
+
+Use `Rc.define` to generate concrete `Rc`/`Weak` types for one payload type.
+The generated types are single-threaded and follow Rust-like `Rc`/`Weak`
+drop semantics.")
+(defmodule Rc
+  (hidden cell-magic-live)
+  (def cell-magic-live 4242424242424242l)
+
+  (hidden cell-magic-dead)
+  (def cell-magic-dead -4242424242424242l)
+
+  (hidden current-thread-id)
+  (posix-only
+    (deftemplate current-thread-id (Fn [] Long)
+      "Long $NAME()"
+      "$DECL { return (Long)(uintptr_t)pthread_self(); }"))
+  (windows-only
+    (deftemplate current-thread-id (Fn [] Long)
+      "Long $NAME()"
+      "$DECL { return 0l; }"))
+
+  (hidden alloc-checked)
+  (deftemplate alloc-checked (Fn [a] (Ptr a))
+    "$a* $NAME($a value)"
+    "$DECL { $a* ptr = ($a*)CARP_MALLOC(sizeof($a)); if (!ptr) { abort(); } *ptr = value; return ptr; }")
+
+  (hidden checked-inc)
+  (sig checked-inc (Fn [Long] Long))
+  (defn checked-inc [n]
+    (if (= n Long.MAX)
+      (unreachable "Rc refcount overflow")
+      (Long.inc n)))
+
+  (hidden checked-dec)
+  (sig checked-dec (Fn [Long] Long))
+  (defn checked-dec [n]
+    (if (> n 0l)
+      (Long.dec n)
+      (unreachable "Rc refcount underflow")))
+
+  (doc define "Generate managed `Rc` and `Weak` reference-counted types.
+
+Example:
+
+  (Rc.define RcString String)
+
+This creates:
+- type `RcString`
+- type `RcStringWeak`
+- module `RcString` with strong-reference operations
+- module `RcStringWeak` with weak-reference operations
+- automatic `copy` and `delete` implementations for both.")
+  (defmacro define [name value-type]
+    (let [weak-name (Symbol.concat [name 'Weak])
+          cell-type (Symbol.concat [name 'Cell])
+          cell-init (Symbol.prefix cell-type 'init)
+          cell-strong (Symbol.prefix cell-type 'strong)
+          cell-set-strong! (Symbol.prefix cell-type 'set-strong!)
+          cell-weak (Symbol.prefix cell-type 'weak)
+          cell-set-weak! (Symbol.prefix cell-type 'set-weak!)
+          cell-value (Symbol.prefix cell-type 'value)
+          cell-set-value! (Symbol.prefix cell-type 'set-value!)
+          cell-owner-thread (Symbol.prefix cell-type 'owner-thread)
+          cell-set-owner-thread! (Symbol.prefix cell-type 'set-owner-thread!)
+          cell-magic (Symbol.prefix cell-type 'magic)
+          cell-set-magic! (Symbol.prefix cell-type 'set-magic!)
+          cell-delete (Symbol.prefix cell-type 'delete)
+          name-copy (Symbol.prefix name 'copy)
+          name-delete (Symbol.prefix name 'delete)
+          weak-copy (Symbol.prefix weak-name 'copy)
+          weak-delete (Symbol.prefix weak-name 'delete)]
+      `(do
+         (register-type %name "void*")
+         (register-type %weak-name "void*")
+         (deftype %cell-type [strong Long weak Long value (Ptr %value-type) owner-thread Long magic Long])
+         (hidden %cell-type)
+         (private %cell-init)
+         (hidden %cell-init)
+         (private %cell-strong)
+         (hidden %cell-strong)
+         (private %cell-set-strong!)
+         (hidden %cell-set-strong!)
+         (private %cell-weak)
+         (hidden %cell-weak)
+         (private %cell-set-weak!)
+         (hidden %cell-set-weak!)
+         (private %cell-value)
+         (hidden %cell-value)
+         (private %cell-set-value!)
+         (hidden %cell-set-value!)
+         (private %cell-owner-thread)
+         (hidden %cell-owner-thread)
+         (private %cell-set-owner-thread!)
+         (hidden %cell-set-owner-thread!)
+         (private %cell-magic)
+         (hidden %cell-magic)
+         (private %cell-set-magic!)
+         (hidden %cell-set-magic!)
+         (private %cell-delete)
+         (hidden %cell-delete)
+
+         (defmodule %name
+           (private from-ref)
+           (hidden from-ref)
+           (sig from-ref (Fn [(Ref %name q)] %name))
+           (defn from-ref [rc-ref]
+             (Pointer.to-value (the (Ptr %name) (Unsafe.coerce rc-ref))))
+
+           (private cell-ptr)
+           (hidden cell-ptr)
+           (sig cell-ptr (Fn [(Ref %name q)] (Ptr %cell-type)))
+           (defn cell-ptr [rc-ref]
+             (the (Ptr %cell-type) (Unsafe.coerce (from-ref rc-ref))))
+
+           (private assert-valid-cell!)
+           (hidden assert-valid-cell!)
+           (sig assert-valid-cell! (Fn [(Ref %cell-type q)] ()))
+           (defn assert-valid-cell! [cell]
+             (if (= @(%cell-magic cell) Rc.cell-magic-live)
+               ()
+               (unreachable "Rc internal error: invalid control block magic")))
+
+           (private assert-owner-thread!)
+           (hidden assert-owner-thread!)
+           (sig assert-owner-thread! (Fn [(Ref %cell-type q)] ()))
+           (defn assert-owner-thread! [cell]
+             (if (= @(%cell-owner-thread cell) (Rc.current-thread-id))
+               ()
+               (unreachable "Rc used from a different thread; this Rc specialization is single-threaded")))
+
+           (doc new "Create a new strong reference with count `strong=1, weak=0`.")
+           (sig new (Fn [%value-type] %name))
+           (defn new [value]
+             (let [value-ptr (Rc.alloc-checked value)
+                   cell-ptr (Rc.alloc-checked (%cell-init 1l 0l value-ptr (Rc.current-thread-id) Rc.cell-magic-live))]
+               (the %name (Unsafe.coerce cell-ptr))))
+
+           (private drop-payload!)
+           (hidden drop-payload!)
+           (sig drop-payload! (Fn [(Ref %cell-type q)] ()))
+           (defn drop-payload! [cell]
+             (do
+               (assert-valid-cell! cell)
+               (assert-owner-thread! cell)
+               (let [value-ptr @(%cell-value cell)]
+                 (unless (null? value-ptr)
+                   (let [owned-value (Pointer.to-value value-ptr)]
+                     (do
+                       (Pointer.free value-ptr)
+                       (%cell-set-value! cell (the (Ptr %value-type) NULL))
+                       (ignore owned-value)))))))
+
+           (doc copy "Increment strong count and return the same shared pointer.")
+           (sig copy (Fn [(Ref %name q)] %name))
+           (defn copy [rc-ref]
+             (let [rc (from-ref rc-ref)
+                   p (cell-ptr rc-ref)]
+               (do
+                 (unless (null? p)
+                   (let [cell (Pointer.to-ref p)]
+                     (do
+                       (assert-valid-cell! cell)
+                       (assert-owner-thread! cell)
+                       (%cell-set-strong! cell (Rc.checked-inc @(%cell-strong cell))))))
+                 rc)))
+           (implements copy %name-copy)
+
+           (doc delete "Drop one strong reference.
+
+When `strong` reaches zero, payload is dropped immediately.
+The control block is freed once both `strong=0` and `weak=0`.")
+           (sig delete (Fn [%name] ()))
+           (defn delete [rc]
+             (let [p (cell-ptr &rc)]
+               (unless (null? p)
+                 (let [cell (Pointer.to-ref p)
+                       strong-n @(%cell-strong cell)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     (if (> strong-n 1l)
+                       (%cell-set-strong! cell (Rc.checked-dec strong-n))
+                       (if (= strong-n 1l)
+                         (do
+                           (drop-payload! cell)
+                           (if (= @(%cell-weak cell) 0l)
+                             (do
+                               (%cell-set-magic! cell Rc.cell-magic-dead)
+                               (%cell-delete (Pointer.to-value p))
+                               (Pointer.free p))
+                             (%cell-set-strong! cell 0l)))
+                         (unreachable "Rc.delete observed strong count underflow"))))))))
+           (implements delete %name-delete)
+
+           (doc strong-count "Get current strong reference count.")
+           (sig strong-count (Fn [(Ref %name q)] Long))
+           (defn strong-count [rc-ref]
+             (let [p (cell-ptr rc-ref)]
+               (if (null? p)
+                 0l
+                 (let [cell (Pointer.to-ref p)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     @(%cell-strong cell))))))
+
+           (doc weak-count "Get current weak reference count.")
+           (sig weak-count (Fn [(Ref %name q)] Long))
+           (defn weak-count [rc-ref]
+             (let [p (cell-ptr rc-ref)]
+               (if (null? p)
+                 0l
+                 (let [cell (Pointer.to-ref p)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     @(%cell-weak cell))))))
+
+           (doc unique? "Returns `true` when this is the unique strong owner.")
+           (sig unique? (Fn [(Ref %name q)] Bool))
+           (defn unique? [rc-ref]
+             (= (strong-count rc-ref) 1l))
+
+           (doc clone "Clone an `Rc` by increasing strong count.")
+           (sig clone (Fn [(Ref %name q)] %name))
+           (defn clone [rc-ref]
+             (copy rc-ref))
+
+           (doc downgrade "Create a weak reference from a strong one.")
+           (sig downgrade (Fn [(Ref %name q)] %weak-name))
+           (defn downgrade [rc-ref]
+             (let [p (cell-ptr rc-ref)]
+               (if (null? p)
+                 (the %weak-name (Unsafe.coerce p))
+                 (let [cell (Pointer.to-ref p)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     (%cell-set-weak! cell (Rc.checked-inc @(%cell-weak cell)))
+                     (the %weak-name (Unsafe.coerce p)))))))
+
+           (doc ptr-eq "Checks whether two `Rc`s point to the same allocation.")
+           (sig ptr-eq (Fn [(Ref %name q) (Ref %name r)] Bool))
+           (defn ptr-eq [a-ref b-ref]
+             (let [pa (cell-ptr a-ref)
+                   pb (cell-ptr b-ref)]
+               (Pointer.eq pa pb)))
+
+           (doc get "Copy out the inner value.
+
+Requires a valid, non-expired `Rc` handle.")
+           (sig get (Fn [(Ref %name q)] %value-type))
+           (defn get [rc-ref]
+             (let [p (cell-ptr rc-ref)]
+               (if (null? p)
+                 (unreachable "Rc.get called on null pointer")
+                 (let [cell (Pointer.to-ref p)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     (let [value-ptr @(%cell-value cell)]
+                       (if (null? value-ptr)
+                         (unreachable "Rc.get called on expired value")
+                         @(Pointer.to-ref value-ptr))))))))
+
+           (doc try-unwrap "Consume an `Rc` and try to extract the inner value.
+
+Returns `(Result.Success value)` when uniquely owned.
+Returns `(Result.Error rc)` unchanged when shared.
+
+On success, extraction moves payload out of the `Rc` cell without calling payload delete.")
+           (sig try-unwrap (Fn [%name] (Result %value-type %name)))
+           (defn try-unwrap [rc]
+             (if (= (strong-count &rc) 1l)
+               (let [p (cell-ptr &rc)]
+                 (if (null? p)
+                   (unreachable "Rc.try-unwrap called on null pointer")
+                   (let [cell (Pointer.to-ref p)
+                         value-ptr @(%cell-value cell)]
+                     (do
+                       (assert-valid-cell! cell)
+                       (assert-owner-thread! cell)
+                       (if (null? value-ptr)
+                         (unreachable "Rc.try-unwrap called on expired value")
+                         (let [value (Pointer.to-value value-ptr)]
+                           (do
+                             (Pointer.free value-ptr)
+                             (%cell-set-value! cell (the (Ptr %value-type) NULL))
+                             (delete rc)
+                             (Result.Success value))))))))
+               (Result.Error rc)))
+
+           (doc unwrap "Consume an `Rc` and extract inner value.
+
+Aborts if shared. Requires a valid, non-expired `Rc` handle.")
+           (sig unwrap (Fn [%name] %value-type))
+           (defn unwrap [rc]
+             (match (try-unwrap rc)
+               (Result.Success value) value
+               (Result.Error _) (unreachable "Rc.unwrap called on shared value")))
+
+           (doc unwrap-or-clone "Consume an `Rc`; extract when unique, otherwise copy payload.")
+           (sig unwrap-or-clone (Fn [%name] %value-type))
+           (defn unwrap-or-clone [rc]
+             (match (try-unwrap rc)
+               (Result.Success value) value
+               (Result.Error rc-back) (get &rc-back)))
+
+           (doc make-unique "Consume an `Rc` and return a uniquely-owned `Rc`.
+
+Requires a valid, non-expired `Rc` handle.")
+           (sig make-unique (Fn [%name] %name))
+           (defn make-unique [rc]
+             (if (unique? &rc)
+               rc
+               (let [p (cell-ptr &rc)]
+                 (if (null? p)
+                   rc
+                   (let [cell (Pointer.to-ref p)
+                         strong-n @(%cell-strong cell)
+                         value-ptr @(%cell-value cell)]
+                     (do
+                       (assert-valid-cell! cell)
+                       (assert-owner-thread! cell)
+                       (if (null? value-ptr)
+                         (unreachable "Rc.make-unique called on expired value")
+                         (do
+                           (%cell-set-strong! cell (Rc.checked-dec strong-n))
+                           (Unsafe.leak rc)
+                           (new @(Pointer.to-ref value-ptr))))))))))
+
+           (doc str "Diagnostic formatting with current strong/weak counts.")
+           (sig str (Fn [(Ref %name q)] String))
+           (defn str [rc-ref]
+             (fmt "(Rc strong=%ld weak=%ld)"
+               (strong-count rc-ref)
+               (weak-count rc-ref))))
+
+         (defmodule %weak-name
+           (private from-ref)
+           (hidden from-ref)
+           (sig from-ref (Fn [(Ref %weak-name q)] %weak-name))
+           (defn from-ref [w-ref]
+             (Pointer.to-value (the (Ptr %weak-name) (Unsafe.coerce w-ref))))
+
+           (private cell-ptr)
+           (hidden cell-ptr)
+           (sig cell-ptr (Fn [(Ref %weak-name q)] (Ptr %cell-type)))
+           (defn cell-ptr [w-ref]
+             (the (Ptr %cell-type) (Unsafe.coerce (from-ref w-ref))))
+
+           (private assert-valid-cell!)
+           (hidden assert-valid-cell!)
+           (sig assert-valid-cell! (Fn [(Ref %cell-type q)] ()))
+           (defn assert-valid-cell! [cell]
+             (if (= @(%cell-magic cell) Rc.cell-magic-live)
+               ()
+               (unreachable "Rc internal error: invalid control block magic")))
+
+           (private assert-owner-thread!)
+           (hidden assert-owner-thread!)
+           (sig assert-owner-thread! (Fn [(Ref %cell-type q)] ()))
+           (defn assert-owner-thread! [cell]
+             (if (= @(%cell-owner-thread cell) (Rc.current-thread-id))
+               ()
+               (unreachable "Rc used from a different thread; this Rc specialization is single-threaded")))
+
+           (doc new "Create an empty weak reference that is immediately expired.")
+           (sig new (Fn [] %weak-name))
+           (defn new []
+             (the %weak-name (Unsafe.coerce (the (Ptr %cell-type) NULL))))
+
+           (doc copy "Increment weak count and return the same weak pointer.")
+           (sig copy (Fn [(Ref %weak-name q)] %weak-name))
+           (defn copy [w-ref]
+             (let [w (from-ref w-ref)
+                   p (cell-ptr w-ref)]
+               (do
+                 (unless (null? p)
+                   (let [cell (Pointer.to-ref p)]
+                     (do
+                       (assert-valid-cell! cell)
+                       (assert-owner-thread! cell)
+                       (%cell-set-weak! cell (Rc.checked-inc @(%cell-weak cell))))))
+                 w)))
+           (implements copy %weak-copy)
+
+           (doc delete "Drop one weak reference.")
+           (sig delete (Fn [%weak-name] ()))
+           (defn delete [w]
+             (let [p (cell-ptr &w)]
+               (unless (null? p)
+                 (let [cell (Pointer.to-ref p)
+                       weak-n @(%cell-weak cell)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     (if (> weak-n 1l)
+                       (%cell-set-weak! cell (Rc.checked-dec weak-n))
+                       (if (= weak-n 1l)
+                         (if (= @(%cell-strong cell) 0l)
+                           (do
+                             (%cell-set-magic! cell Rc.cell-magic-dead)
+                             (%cell-delete (Pointer.to-value p))
+                             (Pointer.free p))
+                           (%cell-set-weak! cell 0l))
+                         (unreachable "Rc.Weak.delete observed weak count underflow"))))))))
+           (implements delete %weak-delete)
+
+           (doc clone "Clone a weak reference by increasing weak count.")
+           (sig clone (Fn [(Ref %weak-name q)] %weak-name))
+           (defn clone [w-ref]
+             (copy w-ref))
+
+           (doc strong-count "Read current strong count via weak reference.")
+           (sig strong-count (Fn [(Ref %weak-name q)] Long))
+           (defn strong-count [w-ref]
+             (let [p (cell-ptr w-ref)]
+               (if (null? p)
+                 0l
+                 (let [cell (Pointer.to-ref p)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     @(%cell-strong cell))))))
+
+           (doc weak-count "Read current weak count.")
+           (sig weak-count (Fn [(Ref %weak-name q)] Long))
+           (defn weak-count [w-ref]
+             (let [p (cell-ptr w-ref)]
+               (if (null? p)
+                 0l
+                 (let [cell (Pointer.to-ref p)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     @(%cell-weak cell))))))
+
+           (doc expired? "Returns `true` when there are no remaining strong references.")
+           (sig expired? (Fn [(Ref %weak-name q)] Bool))
+           (defn expired? [w-ref]
+             (= (strong-count w-ref) 0l))
+
+           (doc alive? "Returns `true` while at least one strong reference exists.")
+           (sig alive? (Fn [(Ref %weak-name q)] Bool))
+           (defn alive? [w-ref]
+             (> (strong-count w-ref) 0l))
+
+           (doc upgrade "Try to obtain a strong reference from a weak one.
+
+Returns `(Maybe.Just rc)` if payload is still alive, otherwise `Nothing`.")
+           (sig upgrade (Fn [(Ref %weak-name q)] (Maybe %name)))
+           (defn upgrade [w-ref]
+             (let [p (cell-ptr w-ref)]
+               (if (null? p)
+                 (Maybe.Nothing)
+                 (let [cell (Pointer.to-ref p)
+                       strong-n @(%cell-strong cell)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     (if (> strong-n 0l)
+                       (do
+                         (%cell-set-strong! cell (Rc.checked-inc strong-n))
+                         (Maybe.Just (the %name (Unsafe.coerce p))))
+                       (Maybe.Nothing)))))))
+
+           (doc ptr-eq "Checks whether two weak refs point to the same allocation.")
+           (sig ptr-eq (Fn [(Ref %weak-name q) (Ref %weak-name r)] Bool))
+           (defn ptr-eq [a-ref b-ref]
+             (let [pa (cell-ptr a-ref)
+                   pb (cell-ptr b-ref)]
+               (Pointer.eq pa pb)))
+
+           (doc str "Diagnostic formatting with current strong/weak counts.")
+           (sig str (Fn [(Ref %weak-name q)] String))
+           (defn str [w-ref]
+             (fmt "(Weak strong=%ld weak=%ld)"
+               (strong-count w-ref)
+               (weak-count w-ref))))))))

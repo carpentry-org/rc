@@ -1,0 +1,111 @@
+(doc Design "Design notes for `rc`.
+
+## Overview
+
+`Rc.define` macro-generates a concrete strong/weak pair for a payload type.
+For example:
+
+```
+(Rc.define RcString String)
+```
+
+This yields:
+
+- `RcString` (strong handle)
+- `RcStringWeak` (weak handle)
+- internal `RcStringCell` with fields `strong`, `weak`, `value` (`Ptr T`)
+
+The generated cell type and low-level helper functions are hidden/private and
+not part of the public API.
+
+## Semantics
+
+Strong operations:
+
+- `new` allocates with `strong=1, weak=0`
+- `copy`/`clone` increments `strong`
+- `delete` decrements `strong`
+
+Weak operations:
+
+- `Weak.new` creates an empty/expired weak handle
+- `downgrade` increments `weak`
+- `Weak.copy`/`Weak.clone` increments `weak`
+- `Weak.alive?` reports whether `strong > 0`
+- `Weak.upgrade` increments `strong` only when `strong > 0`
+- `Weak.delete` decrements `weak`
+
+Deallocation rule:
+
+- payload drops when `strong` reaches zero
+- control block allocation is freed when both counters reach zero
+
+Current behavior:
+
+- weak refs keep only the control block alive
+- `Weak.upgrade` fails after payload drop (`strong == 0`)
+
+## Invariants
+
+- `strong >= 0`
+- `weak >= 0`
+- `unique?` iff `strong == 1`
+- `expired?` iff `strong == 0`
+- `alive?` iff `not expired?`
+- `upgrade` succeeds iff observed `strong > 0`
+
+## Limits
+
+- single-threaded only (non-atomic counters)
+- no automatic cycle collection (same as Rust `Rc`/`Weak`; use `Weak` to break cycles)
+- no lock-free/thread-safe guarantees
+- forged handles via `Unsafe.coerce` are out of contract and may abort in APIs
+  that require live payloads")
+(defmodule Design)
+
+(doc Testing "Testing guidance for `rc`.
+
+## Test suites
+
+- `test/rc.carp`: functional behavior and lifecycle checks
+- `test/rc_fuzz.carp`: state-machine fuzzing for `RcString`
+- `test/rc_fuzz_array_string.carp`: state-machine fuzzing for `RcArrayString`
+- `test/rc_fuzz_probe.carp`: state-machine fuzzing for `RcProbe`
+
+## Sanitizers
+
+Tests enable:
+
+- `-fsanitize=address`
+- `-fsanitize=undefined`
+- `-fno-sanitize-recover=all`
+- `-fno-omit-frame-pointer`
+
+Build controls:
+
+- `RC_OPT_LEVEL` (`O0|O1|O2|O3`, default `O1`)
+- `RC_SANITIZE` (`1|true|yes` to enable, `0|false|no` to disable)
+
+## Fuzz controls
+
+Environment variables:
+
+- `RC_FUZZ_RUNS`
+- `RC_FUZZ_STEPS`
+- `RC_FUZZ_RC_SLOTS`
+- `RC_FUZZ_WEAK_SLOTS`
+- `RC_FUZZ_BASE_SEED`
+- `RC_FUZZ_SEED_STRIDE`
+- `RC_FUZZ_RANDOM_SEED`
+
+Use fixed seed settings for reproducibility and random seeding for broad soak coverage.
+
+## Practical guidance
+
+- run functional and fuzz suites under sanitizers
+- use `./scripts/validate.sh` for the full optimization/sanitizer matrix
+- run long soaks sequentially (avoid parallel runs sharing one `out/main.c`)
+- record seed/run configuration when investigating failures
+
+See `docs/testing.md` for full command recipes.")
+(defmodule Testing)
