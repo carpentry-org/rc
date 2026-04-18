@@ -353,14 +353,17 @@
 
 (defn run-fuzz-once [seed steps rc-slots weak-slots]
   (let-do [rcs (Array.replicate rc-slots &(rc-none))
-           wks (Array.replicate weak-slots &(weak-none))]
-    (FuzzHarness.run-once
-      seed
-      steps
-      &(fn []
-         (do
-           (fuzz-step &rcs &wks)
-           (check-invariants &rcs &wks))))))
+           wks (Array.replicate weak-slots &(weak-none))
+           executed 0]
+    (do
+      (Random.seed-from seed)
+      (for [i 0 steps]
+        (do
+          (ignore i)
+          (fuzz-step &rcs &wks)
+          (check-invariants &rcs &wks)
+          (set! executed (Int.inc executed))))
+      executed)))
 
 (defn run-fuzz-suite []
   (let-do [runs (fuzz-runs)
