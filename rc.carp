@@ -104,6 +104,14 @@ This creates:
          (hidden %cell-delete)
 
          (defmodule %name
+           (private *drain-queue*)
+           (hidden *drain-queue*)
+           (def *drain-queue* (the (Array (Ptr %cell-type)) []))
+
+           (private *draining*)
+           (hidden *draining*)
+           (def *draining* false)
+
            (private from-ref)
            (hidden from-ref)
            (sig from-ref (Fn [(Ref %name q)] %name))
@@ -169,9 +177,34 @@ This creates:
                  rc)))
            (implements copy %name-copy)
 
+           (private finalize-cell!)
+           (hidden finalize-cell!)
+           (sig finalize-cell! (Fn [(Ptr %cell-type)] ()))
+           (defn finalize-cell! [p]
+             (let [cell (Pointer.to-ref p)]
+               (if (= @(%cell-weak cell) 0l)
+                 (do
+                   (%cell-set-magic! cell Rc.cell-magic-dead)
+                   (%cell-delete (Pointer.to-value p))
+                   (Pointer.free p))
+                 (%cell-set-strong! cell 0l))))
+
+           (private drain-step!)
+           (hidden drain-step!)
+           (sig drain-step! (Fn [(Ptr %cell-type)] ()))
+           (defn drain-step! [p]
+             (do
+               (let [cell (Pointer.to-ref p)]
+                 (do
+                   (drop-payload! cell)
+                   (%cell-set-weak! cell (Rc.checked-dec @(%cell-weak cell)))))
+               (finalize-cell! p)))
+
            (doc delete "Drop one strong reference.
 
-When `strong` reaches zero, payload is dropped immediately.
+When `strong` reaches zero, payload is dropped. Nested drops from the payload
+are queued and processed iteratively so that deep linked structures do not
+cascade through the C call stack.
 The control block is freed once both `strong=0` and `weak=0`.")
            (sig delete (Fn [%name] ()))
            (defn delete [rc]
@@ -185,14 +218,18 @@ The control block is freed once both `strong=0` and `weak=0`.")
                      (if (> strong-n 1l)
                        (%cell-set-strong! cell (Rc.checked-dec strong-n))
                        (if (= strong-n 1l)
-                         (do
-                           (drop-payload! cell)
-                           (if (= @(%cell-weak cell) 0l)
-                             (do
-                               (%cell-set-magic! cell Rc.cell-magic-dead)
-                               (%cell-delete (Pointer.to-value p))
-                               (Pointer.free p))
-                             (%cell-set-strong! cell 0l)))
+                         (if *draining*
+                           (do
+                             (%cell-set-strong! cell 0l)
+                             (%cell-set-weak! cell (Rc.checked-inc @(%cell-weak cell)))
+                             (Array.push-back! &*drain-queue* p))
+                           (do
+                             (set! *draining* true)
+                             (drop-payload! cell)
+                             (finalize-cell! p)
+                             (while-do (> (Array.length &*drain-queue*) 0)
+                               (drain-step! (Array.pop-back! &*drain-queue*)))
+                             (set! *draining* false)))
                          (unreachable "Rc.delete observed strong count underflow"))))))))
            (implements delete %name-delete)
 

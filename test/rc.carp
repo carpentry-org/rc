@@ -40,6 +40,20 @@
 
 (Rc.define RcProbe DropProbe)
 
+(register-type RcLink "void*")
+(deftype LinkNode [next (Maybe RcLink)])
+(Rc.define RcLink LinkNode)
+
+(defn build-link-chain [n]
+  (let-do [link (the (Maybe RcLink) (Maybe.Nothing))]
+    (for [i 0 n]
+      (set! link (Maybe.Just (RcLink.new (LinkNode.init link)))))
+    link))
+
+(defn deep-chain-lifecycle []
+  (let [chain (build-link-chain 100000)]
+    (ignore chain)))
+
 (FuzzHarness.configure-build)
 
 (defn assert-memory-balance [state f expected-balance descr]
@@ -357,4 +371,13 @@
   (assert-memory-balance test rc-weak-lifecycle 0l "Rc weak expiration lifecycle is balanced")
   (assert-memory-balance test rc-weak-upgrade-lifecycle 0l "Rc weak upgrade lifecycle is balanced")
   (assert-memory-balance test rc-weak-new-lifecycle 0l "Rc weak.new lifecycle is balanced")
+
+  (assert-equal test
+    true
+    (let [chain (build-link-chain 100000)]
+      (match-ref &chain
+        (Maybe.Just _) true
+        (Maybe.Nothing) false))
+    "dropping a 100k-deep Rc chain does not blow the C stack")
+  (assert-memory-balance test deep-chain-lifecycle 0l "100k-deep Rc chain destruction is balanced")
 )
