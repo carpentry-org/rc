@@ -23,6 +23,21 @@ drop semantics.")
       "Long $NAME()"
       "$DECL { return 0l; }"))
 
+  (doc checks-enabled?
+    "Whether runtime safety checks (control block magic, owner thread) run.
+
+Follows C `assert` semantics: checks are compiled out when `NDEBUG` is
+defined, which `carp --optimize` does. Debug builds keep full checking.")
+  (deftemplate checks-enabled? (Fn [] Bool)
+    "bool $NAME()"
+    "$DECL {
+#ifdef NDEBUG
+    return false;
+#else
+    return true;
+#endif
+}")
+
   (hidden alloc-checked)
   (deftemplate alloc-checked (Fn [a] (Ptr a))
     "$a* $NAME($a value)"
@@ -68,38 +83,40 @@ This creates:
           cell-set-owner-thread! (Symbol.prefix cell-type 'set-owner-thread!)
           cell-magic (Symbol.prefix cell-type 'magic)
           cell-set-magic! (Symbol.prefix cell-type 'set-magic!)
+          cell-live (Symbol.prefix cell-type 'live)
+          cell-set-live! (Symbol.prefix cell-type 'set-live!)
           cell-delete (Symbol.prefix cell-type 'delete)
           name-copy (Symbol.prefix name 'copy)
           name-delete (Symbol.prefix name 'delete)
+          name-str (Symbol.prefix name 'str)
+          name-prn (Symbol.prefix name 'prn)
           weak-copy (Symbol.prefix weak-name 'copy)
-          weak-delete (Symbol.prefix weak-name 'delete)]
+          weak-delete (Symbol.prefix weak-name 'delete)
+          weak-str (Symbol.prefix weak-name 'str)
+          weak-prn (Symbol.prefix weak-name 'prn)]
       `(do
          (register-type %name "void*")
          (register-type %weak-name "void*")
-         (deftype %cell-type [strong Long weak Long value (Ptr %value-type) owner-thread Long magic Long])
+         (deftype %cell-type [strong Long weak Long owner-thread Long magic Long live Bool value %value-type])
+         ; cell accessors are used from the generated sibling modules
+         ; (%name and %weak-name), so they must not be private; `hidden`
+         ; keeps them out of docs and discovery.
          (hidden %cell-type)
-         (private %cell-init)
          (hidden %cell-init)
-         (private %cell-strong)
          (hidden %cell-strong)
-         (private %cell-set-strong!)
          (hidden %cell-set-strong!)
-         (private %cell-weak)
          (hidden %cell-weak)
-         (private %cell-set-weak!)
          (hidden %cell-set-weak!)
-         (private %cell-value)
          (hidden %cell-value)
          (private %cell-set-value!)
          (hidden %cell-set-value!)
-         (private %cell-owner-thread)
          (hidden %cell-owner-thread)
          (private %cell-set-owner-thread!)
          (hidden %cell-set-owner-thread!)
-         (private %cell-magic)
          (hidden %cell-magic)
-         (private %cell-set-magic!)
          (hidden %cell-set-magic!)
+         (hidden %cell-live)
+         (hidden %cell-set-live!)
          (private %cell-delete)
          (hidden %cell-delete)
 
@@ -128,23 +145,29 @@ This creates:
            (hidden assert-valid-cell!)
            (sig assert-valid-cell! (Fn [(Ref %cell-type q)] ()))
            (defn assert-valid-cell! [cell]
-             (if (= @(%cell-magic cell) Rc.cell-magic-live)
-               ()
-               (unreachable "Rc internal error: invalid control block magic")))
+             (when (Rc.checks-enabled?)
+               (if (= @(%cell-magic cell) Rc.cell-magic-live)
+                 ()
+                 (unreachable "Rc internal error: invalid control block magic"))))
 
            (private assert-owner-thread!)
            (hidden assert-owner-thread!)
            (sig assert-owner-thread! (Fn [(Ref %cell-type q)] ()))
            (defn assert-owner-thread! [cell]
-             (if (= @(%cell-owner-thread cell) (Rc.current-thread-id))
-               ()
-               (unreachable "Rc used from a different thread; this Rc specialization is single-threaded")))
+             (when (Rc.checks-enabled?)
+               (if (= @(%cell-owner-thread cell) (Rc.current-thread-id))
+                 ()
+                 (unreachable "Rc used from a different thread; this Rc specialization is single-threaded"))))
 
-           (doc new "Create a new strong reference with count `strong=1, weak=0`.")
+           (doc new "Create a new strong reference with count `strong=1, weak=0`.
+
+The payload lives inline in the control block: one allocation per `Rc`.")
            (sig new (Fn [%value-type] %name))
            (defn new [value]
-             (let [value-ptr (Rc.alloc-checked value)
-                   cell-ptr (Rc.alloc-checked (%cell-init 1l 0l value-ptr (Rc.current-thread-id) Rc.cell-magic-live))]
+             ; owner-thread is only read by the NDEBUG-gated checks, so
+             ; skip the pthread_self call in release builds
+             (let [owner (if (Rc.checks-enabled?) (Rc.current-thread-id) 0l)
+                   cell-ptr (Rc.alloc-checked (%cell-init 1l 0l owner Rc.cell-magic-live true value))]
                (the %name (Unsafe.coerce cell-ptr))))
 
            (private drop-payload!)
@@ -154,13 +177,13 @@ This creates:
              (do
                (assert-valid-cell! cell)
                (assert-owner-thread! cell)
-               (let [value-ptr @(%cell-value cell)]
-                 (unless (null? value-ptr)
-                   (let [owned-value (Pointer.to-value value-ptr)]
-                     (do
-                       (Pointer.free value-ptr)
-                       (%cell-set-value! cell (the (Ptr %value-type) NULL))
-                       (ignore owned-value)))))))
+               (when @(%cell-live cell)
+                 (do
+                   (%cell-set-live! cell false)
+                   (let [owned-value (Pointer.to-value
+                                       (the (Ptr %value-type)
+                                            (Unsafe.coerce (%cell-value cell))))]
+                     (ignore owned-value))))))
 
            (doc copy "Increment strong count and return the same shared pointer.")
            (sig copy (Fn [(Ref %name q)] %name))
@@ -185,7 +208,10 @@ This creates:
                (if (= @(%cell-weak cell) 0l)
                  (do
                    (%cell-set-magic! cell Rc.cell-magic-dead)
-                   (%cell-delete (Pointer.to-value p))
+                   ; the payload was already dropped (or moved out) when
+                   ; `strong` hit zero, so the raw block is freed directly;
+                   ; running the generated cell deleter here would delete
+                   ; the stale inline payload a second time.
                    (Pointer.free p))
                  (%cell-set-strong! cell 0l))))
 
@@ -299,10 +325,26 @@ Requires a valid, non-expired `Rc` handle.")
                    (do
                      (assert-valid-cell! cell)
                      (assert-owner-thread! cell)
-                     (let [value-ptr @(%cell-value cell)]
-                       (if (null? value-ptr)
-                         (unreachable "Rc.get called on expired value")
-                         @(Pointer.to-ref value-ptr))))))))
+                     (if @(%cell-live cell)
+                       @(%cell-value cell)
+                       (unreachable "Rc.get called on expired value")))))))
+
+           (doc value-ref "Borrow the payload in place, without copying.
+
+The returned reference shares the handle's lifetime. Requires a valid,
+non-expired `Rc` handle.")
+           (sig value-ref (Fn [(Ref %name q)] (Ref %value-type q)))
+           (defn value-ref [rc-ref]
+             (let [p (cell-ptr rc-ref)]
+               (if (null? p)
+                 (unreachable "Rc.value-ref called on null pointer")
+                 (let [cell (Pointer.to-ref p)]
+                   (do
+                     (assert-valid-cell! cell)
+                     (assert-owner-thread! cell)
+                     (if @(%cell-live cell)
+                       (the (Ref %value-type q) (Unsafe.coerce (%cell-value cell)))
+                       (unreachable "Rc.value-ref called on expired value")))))))
 
            (doc try-unwrap "Consume an `Rc` and try to extract the inner value.
 
@@ -316,17 +358,17 @@ On success, extraction moves payload out of the `Rc` cell without calling payloa
                (let [p (cell-ptr &rc)]
                  (if (null? p)
                    (unreachable "Rc.try-unwrap called on null pointer")
-                   (let [cell (Pointer.to-ref p)
-                         value-ptr @(%cell-value cell)]
+                   (let [cell (Pointer.to-ref p)]
                      (do
                        (assert-valid-cell! cell)
                        (assert-owner-thread! cell)
-                       (if (null? value-ptr)
+                       (if (not @(%cell-live cell))
                          (unreachable "Rc.try-unwrap called on expired value")
-                         (let [value (Pointer.to-value value-ptr)]
+                         (let [value (Pointer.to-value
+                                       (the (Ptr %value-type)
+                                            (Unsafe.coerce (%cell-value cell))))]
                            (do
-                             (Pointer.free value-ptr)
-                             (%cell-set-value! cell (the (Ptr %value-type) NULL))
+                             (%cell-set-live! cell false)
                              (delete rc)
                              (Result.Success value))))))))
                (Result.Error rc)))
@@ -358,24 +400,28 @@ Requires a valid, non-expired `Rc` handle.")
                  (if (null? p)
                    rc
                    (let [cell (Pointer.to-ref p)
-                         strong-n @(%cell-strong cell)
-                         value-ptr @(%cell-value cell)]
+                         strong-n @(%cell-strong cell)]
                      (do
                        (assert-valid-cell! cell)
                        (assert-owner-thread! cell)
-                       (if (null? value-ptr)
+                       (if (not @(%cell-live cell))
                          (unreachable "Rc.make-unique called on expired value")
                          (do
                            (%cell-set-strong! cell (Rc.checked-dec strong-n))
                            (Unsafe.leak rc)
-                           (new @(Pointer.to-ref value-ptr))))))))))
+                           (new @(%cell-value cell))))))))))
 
            (doc str "Diagnostic formatting with current strong/weak counts.")
            (sig str (Fn [(Ref %name q)] String))
            (defn str [rc-ref]
              (fmt "(Rc strong=%ld weak=%ld)"
                (strong-count rc-ref)
-               (weak-count rc-ref))))
+               (weak-count rc-ref)))
+           (implements str %name-str)
+
+           (sig prn (Fn [(Ref %name q)] String))
+           (defn prn [rc-ref] (str rc-ref))
+           (implements prn %name-prn))
 
          (defmodule %weak-name
            (private from-ref)
@@ -394,17 +440,19 @@ Requires a valid, non-expired `Rc` handle.")
            (hidden assert-valid-cell!)
            (sig assert-valid-cell! (Fn [(Ref %cell-type q)] ()))
            (defn assert-valid-cell! [cell]
-             (if (= @(%cell-magic cell) Rc.cell-magic-live)
-               ()
-               (unreachable "Rc internal error: invalid control block magic")))
+             (when (Rc.checks-enabled?)
+               (if (= @(%cell-magic cell) Rc.cell-magic-live)
+                 ()
+                 (unreachable "Rc internal error: invalid control block magic"))))
 
            (private assert-owner-thread!)
            (hidden assert-owner-thread!)
            (sig assert-owner-thread! (Fn [(Ref %cell-type q)] ()))
            (defn assert-owner-thread! [cell]
-             (if (= @(%cell-owner-thread cell) (Rc.current-thread-id))
-               ()
-               (unreachable "Rc used from a different thread; this Rc specialization is single-threaded")))
+             (when (Rc.checks-enabled?)
+               (if (= @(%cell-owner-thread cell) (Rc.current-thread-id))
+                 ()
+                 (unreachable "Rc used from a different thread; this Rc specialization is single-threaded"))))
 
            (doc new "Create an empty weak reference that is immediately expired.")
            (sig new (Fn [] %weak-name))
@@ -442,7 +490,8 @@ Requires a valid, non-expired `Rc` handle.")
                          (if (= @(%cell-strong cell) 0l)
                            (do
                              (%cell-set-magic! cell Rc.cell-magic-dead)
-                             (%cell-delete (Pointer.to-value p))
+                             ; payload already dropped when strong hit zero;
+                             ; free the raw block without the cell deleter
                              (Pointer.free p))
                            (%cell-set-weak! cell 0l))
                          (unreachable "Rc.Weak.delete observed weak count underflow"))))))))
@@ -518,4 +567,9 @@ Returns `(Maybe.Just rc)` if payload is still alive, otherwise `Nothing`.")
            (defn str [w-ref]
              (fmt "(Weak strong=%ld weak=%ld)"
                (strong-count w-ref)
-               (weak-count w-ref))))))))
+               (weak-count w-ref)))
+           (implements str %weak-str)
+
+           (sig prn (Fn [(Ref %weak-name q)] String))
+           (defn prn [w-ref] (str w-ref))
+           (implements prn %weak-prn))))))

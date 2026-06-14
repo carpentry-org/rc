@@ -49,7 +49,7 @@ Project structure:
 Load from a git source in Carp's standard library-loading style:
 
 ```clojure
-(load "git@github.com:carpentry-org/rc@0.1.0")
+(load "git@github.com:carpentry-org/rc@0.2.0")
 ```
 
 Use release tags when possible for reproducible builds.
@@ -97,13 +97,19 @@ Weak example:
 
 ## Mental Model
 
-Each allocation stores:
+Each allocation stores, in one cell:
 
 - `strong : Long`
 - `weak : Long`
-- `value : (Ptr T)` (cleared when strong reaches zero)
 - `owner-thread : Long` (thread affinity guard for single-threaded usage)
 - `magic : Long` (control-block integrity guard)
+- `live : Bool` (false once the payload is dropped or moved out)
+- `value : T` (the payload, stored inline)
+
+The payload is inline, so `new` does a single allocation. Read it
+without copying via `value-ref`; `get` returns a copy. The
+owner-thread and magic guards follow C `assert` semantics and compile
+out under `--optimize` (which defines `NDEBUG`).
 
 Behavior:
 
@@ -242,7 +248,7 @@ threading story in Carp runtime.
 
 ## Known Limitations
 
-- alpha quality (`0.1.0`): API and behavior may still change
+- alpha quality (`0.2.0`): API and behavior may still change
 - non-atomic and single-threaded only (not thread-safe)
 - no allocator pluggability yet
 - weak API is intentionally minimal: `new`, counts, `expired?`/`alive?`, `upgrade`, and pointer equality

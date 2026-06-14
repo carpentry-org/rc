@@ -8,7 +8,7 @@
 (Rc.define RcInt Int)
 (Rc.define RcArrayString (Array String))
 
-(deftype FakeRcStringCell [strong Long weak Long value (Ptr String) owner-thread Long magic Long])
+(deftype FakeRcStringCell [strong Long weak Long owner-thread Long magic Long live Bool value String])
 
 (deftype DropProbe [id Int])
 
@@ -295,7 +295,7 @@
   (assert-signal test
     System.signal-abort
     (fn []
-      (let [fake-ptr (Pointer.unsafe-alloc (FakeRcStringCell.init 1l 0l (the (Ptr String) NULL) 0l 0l))
+      (let [fake-ptr (Pointer.unsafe-alloc (FakeRcStringCell.init 1l 0l 0l 0l true @"forged"))
             fake-rc (the RcString (Unsafe.coerce fake-ptr))]
         (ignore (RcString.strong-count &fake-rc))))
     "forged Rc handle aborts on control-block magic mismatch")

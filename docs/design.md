@@ -30,18 +30,25 @@ For payload type `T`, the generated cell shape is:
 (deftype RcTCell
   [strong Long
    weak Long
-   value (Ptr T)
    owner-thread Long
-   magic Long])
+   magic Long
+   live Bool
+   value T])
 ```
 
 Meaning:
 
 - `strong`: number of live strong handles
 - `weak`: number of live weak handles
-- `value`: payload pointer, cleared after payload drop
 - `owner-thread`: thread id captured at allocation; used for single-thread guardrails
 - `magic`: integrity tag used to reject forged/corrupt control blocks
+- `live`: `true` while the payload is present, `false` after it is dropped or moved out
+- `value`: the payload, stored inline in the cell
+
+The payload lives inline rather than behind its own pointer, so `new`
+does a single allocation per `Rc` rather than one for the cell and one
+for the payload. `live` replaces the old "value pointer is NULL" signal
+for an emptied cell.
 
 ## Handle Representation
 
@@ -62,8 +69,8 @@ details and are not part of the public API.
 ### Strong operations
 
 - `new`
-  - allocates one cell
-  - initializes counts to `strong=1`, `weak=0`
+  - allocates one cell with the payload inline
+  - initializes counts to `strong=1`, `weak=0`, and `live=true`
 - `copy` / `clone`
   - increments `strong`
   - returns same pointer
@@ -129,10 +136,14 @@ Test/fuzz invariants mirror this:
 
 Time complexity:
 
-- O(1): `copy`, `clone`, `delete`, `downgrade`, `upgrade`, counters, `ptr-eq`
+- O(1): `copy`, `clone`, `delete`, `downgrade`, `upgrade`, counters, `ptr-eq`,
+  `value-ref`
 - O(size(T)) potential copy: `get`, `unwrap-or-clone`
 - O(1) move on success: `try-unwrap`, `unwrap`
 - O(size(T)) + allocation: `make-unique` when shared
+
+`value-ref` borrows the inline payload in place and copies nothing; use
+it instead of `get` on read-only paths where a copy is not needed.
 
 Space:
 
@@ -149,7 +160,11 @@ Current non-goals:
 
 Because counters are non-atomic, this implementation is only valid in a
 single-threaded context. Runtime checks enforce this by aborting on
-cross-thread access to a live control block.
+cross-thread access to a live control block. These checks (the
+owner-thread guard and the control-block magic check) follow C `assert`
+semantics: they compile out when `NDEBUG` is defined, which
+`carp --optimize` does, so release builds carry no per-access check
+overhead. Debug builds keep full checking.
 
 Handle validity contract:
 
