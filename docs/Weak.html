@@ -42,17 +42,30 @@
             </div>
             <div class="module">
                 <h1>
-                    Rc
+                    Weak
                 </h1>
                 <div class="module-description">
-                    <p>Generic single-threaded reference counting (Rust-like <code>Rc</code>/<code>Weak</code>).</p>
-<p><code>(Rc a)</code> is a transparent generic type: there is no per-type macro, so it can
-be used directly and, crucially, in recursive types via the compiler's
-<code>recursive</code> flag, e.g.</p>
-<p>(deftype (Lst a) (Cons [a (Rc (Lst a))]) (Nil []))</p>
-<p>Drops recurse on the C call stack, so very deep (non-logarithmic) <code>Rc</code> chains
-can overflow it. For tree-shaped or log-depth structures this is not a concern.</p>
+                    
+                </div>
+                <div class="binder">
+                    <a class="anchor" href="#alive?">
+                        <h3 id="alive?">
+                            alive?
+                        </h3>
+                    </a>
+                    <div class="description">
+                        defn
+                    </div>
+                    <p class="sig">
+                        (Fn [(Ref (Weak a) b)] Bool)
+                    </p>
+                    <pre class="args">
+                        (alive? w-ref)
+                    </pre>
+                    <p class="doc">
+                        <p>Returns <code>true</code> while at least one strong reference exists.</p>
 
+                    </p>
                 </div>
                 <div class="binder">
                     <a class="anchor" href="#cell">
@@ -64,35 +77,13 @@ can overflow it. For tree-shaped or log-depth structures this is not a concern.<
                         instantiate
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] (Ref (Ptr (RcCell a)) b))
+                        (Fn [(Ref (Weak a) b)] (Ref (Ptr (RcCell a)) b))
                     </p>
                     <span>
                         
                     </span>
                     <p class="doc">
-                        <p>gets the <code>cell</code> property of a <code>Rc</code>.</p>
-
-                    </p>
-                </div>
-                <div class="binder">
-                    <a class="anchor" href="#checks-enabled?">
-                        <h3 id="checks-enabled?">
-                            checks-enabled?
-                        </h3>
-                    </a>
-                    <div class="description">
-                        instantiate
-                    </div>
-                    <p class="sig">
-                        (Fn [] Bool)
-                    </p>
-                    <span>
-                        
-                    </span>
-                    <p class="doc">
-                        <p>Whether runtime safety checks (refcount overflow/underflow) run.</p>
-<p>Follows C <code>assert</code> semantics: checks are compiled out when <code>NDEBUG</code> is
-defined, which <code>carp --optimize</code> does. Debug builds keep full checking.</p>
+                        <p>gets the <code>cell</code> property of a <code>Weak</code>.</p>
 
                     </p>
                 </div>
@@ -106,13 +97,13 @@ defined, which <code>carp --optimize</code> does. Debug builds keep full checkin
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] (Rc a))
+                        (Fn [(Ref (Weak a) b)] (Weak a))
                     </p>
                     <pre class="args">
-                        (clone rc-ref)
+                        (clone w-ref)
                     </pre>
                     <p class="doc">
-                        <p>Clone an <code>Rc</code> by increasing strong count.</p>
+                        <p>Clone a weak reference by increasing weak count.</p>
 
                     </p>
                 </div>
@@ -126,13 +117,13 @@ defined, which <code>carp --optimize</code> does. Debug builds keep full checkin
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] (Rc a))
+                        (Fn [(Ref (Weak a) b)] (Weak a))
                     </p>
                     <pre class="args">
-                        (copy rc-ref)
+                        (copy w-ref)
                     </pre>
                     <p class="doc">
-                        <p>Increment strong count and return the same shared pointer.</p>
+                        <p>Increment weak count and return the same weak pointer.</p>
 
                     </p>
                 </div>
@@ -146,57 +137,33 @@ defined, which <code>carp --optimize</code> does. Debug builds keep full checkin
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Rc a)] ())
+                        (Fn [(Weak a)] ())
                     </p>
                     <pre class="args">
-                        (delete rc)
+                        (delete w)
                     </pre>
                     <p class="doc">
-                        <p>Drop one strong reference.</p>
-<p>When <code>strong</code> reaches zero the payload is dropped and, once <code>weak=0</code> too, the
-control block is freed. Deep same-type chains drop iteratively via a per-type
-drain queue, so they do not overflow the C call stack.</p>
+                        <p>Drop one weak reference.</p>
 
                     </p>
                 </div>
                 <div class="binder">
-                    <a class="anchor" href="#downgrade">
-                        <h3 id="downgrade">
-                            downgrade
+                    <a class="anchor" href="#expired?">
+                        <h3 id="expired?">
+                            expired?
                         </h3>
                     </a>
                     <div class="description">
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] (Weak a))
+                        (Fn [(Ref (Weak a) b)] Bool)
                     </p>
                     <pre class="args">
-                        (downgrade rc-ref)
+                        (expired? w-ref)
                     </pre>
                     <p class="doc">
-                        <p>Create a weak reference from a strong one.</p>
-
-                    </p>
-                </div>
-                <div class="binder">
-                    <a class="anchor" href="#get">
-                        <h3 id="get">
-                            get
-                        </h3>
-                    </a>
-                    <div class="description">
-                        defn
-                    </div>
-                    <p class="sig">
-                        (Fn [(Ref (Rc a) b)] a)
-                    </p>
-                    <pre class="args">
-                        (get rc-ref)
-                    </pre>
-                    <p class="doc">
-                        <p>Copy out the inner value.</p>
-<p>Requires a valid, non-expired <code>Rc</code> handle.</p>
+                        <p>Returns <code>true</code> when there are no remaining strong references.</p>
 
                     </p>
                 </div>
@@ -210,34 +177,13 @@ drain queue, so they do not overflow the C call stack.</p>
                         template
                     </div>
                     <p class="sig">
-                        (Fn [(Ptr (RcCell a))] (Rc a))
+                        (Fn [(Ptr (RcCell a))] (Weak a))
                     </p>
                     <span>
                         
                     </span>
                     <p class="doc">
-                        <p>creates a <code>Rc</code>.</p>
-
-                    </p>
-                </div>
-                <div class="binder">
-                    <a class="anchor" href="#make-unique">
-                        <h3 id="make-unique">
-                            make-unique
-                        </h3>
-                    </a>
-                    <div class="description">
-                        defn
-                    </div>
-                    <p class="sig">
-                        (Fn [(Rc a)] (Rc a))
-                    </p>
-                    <pre class="args">
-                        (make-unique rc)
-                    </pre>
-                    <p class="doc">
-                        <p>Consume an <code>Rc</code> and return a uniquely-owned <code>Rc</code>.</p>
-<p>Requires a valid, non-expired <code>Rc</code> handle.</p>
+                        <p>creates a <code>Weak</code>.</p>
 
                     </p>
                 </div>
@@ -251,14 +197,13 @@ drain queue, so they do not overflow the C call stack.</p>
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [a] (Rc a))
+                        (Fn [] (Weak a))
                     </p>
                     <pre class="args">
-                        (new value)
+                        (new)
                     </pre>
                     <p class="doc">
-                        <p>Create a new strong reference with count <code>strong=1, weak=0</code>.</p>
-<p>The payload lives inline in the control block: one allocation per <code>Rc</code>.</p>
+                        <p>Create an empty weak reference that is immediately expired.</p>
 
                     </p>
                 </div>
@@ -272,13 +217,13 @@ drain queue, so they do not overflow the C call stack.</p>
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] String)
+                        (Fn [(Ref (Weak a) b)] String)
                     </p>
                     <pre class="args">
-                        (prn rc-ref)
+                        (prn w-ref)
                     </pre>
                     <p class="doc">
-                        <p>converts a <code>Rc</code> to a string.</p>
+                        <p>converts a <code>Weak</code> to a string.</p>
 
                     </p>
                 </div>
@@ -292,13 +237,13 @@ drain queue, so they do not overflow the C call stack.</p>
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b), (Ref (Rc a) c)] Bool)
+                        (Fn [(Ref (Weak a) b), (Ref (Weak a) c)] Bool)
                     </p>
                     <pre class="args">
                         (ptr-eq a-ref b-ref)
                     </pre>
                     <p class="doc">
-                        <p>Checks whether two <code>Rc</code>s point to the same allocation.</p>
+                        <p>Checks whether two weak refs point to the same allocation.</p>
 
                     </p>
                 </div>
@@ -312,13 +257,13 @@ drain queue, so they do not overflow the C call stack.</p>
                         template
                     </div>
                     <p class="sig">
-                        (Fn [(Rc a), (Ptr (RcCell a))] (Rc a))
+                        (Fn [(Weak a), (Ptr (RcCell a))] (Weak a))
                     </p>
                     <span>
                         
                     </span>
                     <p class="doc">
-                        <p>sets the <code>cell</code> property of a <code>Rc</code>.</p>
+                        <p>sets the <code>cell</code> property of a <code>Weak</code>.</p>
 
                     </p>
                 </div>
@@ -332,13 +277,13 @@ drain queue, so they do not overflow the C call stack.</p>
                         template
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b), (Ptr (RcCell a))] ())
+                        (Fn [(Ref (Weak a) b), (Ptr (RcCell a))] ())
                     </p>
                     <span>
                         
                     </span>
                     <p class="doc">
-                        <p>sets the <code>cell</code> property of a <code>Rc</code> in place.</p>
+                        <p>sets the <code>cell</code> property of a <code>Weak</code> in place.</p>
 
                     </p>
                 </div>
@@ -352,10 +297,10 @@ drain queue, so they do not overflow the C call stack.</p>
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] String)
+                        (Fn [(Ref (Weak a) b)] String)
                     </p>
                     <pre class="args">
-                        (str rc-ref)
+                        (str w-ref)
                     </pre>
                     <p class="doc">
                         <p>Diagnostic formatting with current strong/weak counts.</p>
@@ -372,98 +317,13 @@ drain queue, so they do not overflow the C call stack.</p>
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] Long)
+                        (Fn [(Ref (Weak a) b)] Long)
                     </p>
                     <pre class="args">
-                        (strong-count rc-ref)
+                        (strong-count w-ref)
                     </pre>
                     <p class="doc">
-                        <p>Get current strong reference count.</p>
-
-                    </p>
-                </div>
-                <div class="binder">
-                    <a class="anchor" href="#try-unwrap">
-                        <h3 id="try-unwrap">
-                            try-unwrap
-                        </h3>
-                    </a>
-                    <div class="description">
-                        defn
-                    </div>
-                    <p class="sig">
-                        (Fn [(Rc a)] (Result a (Rc a)))
-                    </p>
-                    <pre class="args">
-                        (try-unwrap rc)
-                    </pre>
-                    <p class="doc">
-                        <p>Consume an <code>Rc</code> and try to extract the inner value.</p>
-<p>Returns <code>(Result.Success value)</code> when uniquely owned.
-Returns <code>(Result.Error rc)</code> unchanged when shared.</p>
-<p>On success, extraction moves the payload out of the <code>Rc</code> cell without calling
-payload delete.</p>
-
-                    </p>
-                </div>
-                <div class="binder">
-                    <a class="anchor" href="#unique?">
-                        <h3 id="unique?">
-                            unique?
-                        </h3>
-                    </a>
-                    <div class="description">
-                        defn
-                    </div>
-                    <p class="sig">
-                        (Fn [(Ref (Rc a) b)] Bool)
-                    </p>
-                    <pre class="args">
-                        (unique? rc-ref)
-                    </pre>
-                    <p class="doc">
-                        <p>Returns <code>true</code> when this is the unique strong owner.</p>
-
-                    </p>
-                </div>
-                <div class="binder">
-                    <a class="anchor" href="#unwrap">
-                        <h3 id="unwrap">
-                            unwrap
-                        </h3>
-                    </a>
-                    <div class="description">
-                        defn
-                    </div>
-                    <p class="sig">
-                        (Fn [(Rc a)] a)
-                    </p>
-                    <pre class="args">
-                        (unwrap rc)
-                    </pre>
-                    <p class="doc">
-                        <p>Consume an <code>Rc</code> and extract inner value.</p>
-<p>Aborts if shared. Requires a valid, non-expired <code>Rc</code> handle.</p>
-
-                    </p>
-                </div>
-                <div class="binder">
-                    <a class="anchor" href="#unwrap-or-clone">
-                        <h3 id="unwrap-or-clone">
-                            unwrap-or-clone
-                        </h3>
-                    </a>
-                    <div class="description">
-                        defn
-                    </div>
-                    <p class="sig">
-                        (Fn [(Rc a)] a)
-                    </p>
-                    <pre class="args">
-                        (unwrap-or-clone rc)
-                    </pre>
-                    <p class="doc">
-                        <p>Consume an <code>Rc</code>; extract when unique, otherwise copy payload.</p>
+                        <p>Read current strong count via weak reference.</p>
 
                     </p>
                 </div>
@@ -477,35 +337,34 @@ payload delete.</p>
                         instantiate
                     </div>
                     <p class="sig">
-                        (Fn [(Rc a), (Ref (Fn [(Ptr (RcCell a))] (Ptr (RcCell a)) b) c)] (Rc a))
+                        (Fn [(Weak a), (Ref (Fn [(Ptr (RcCell a))] (Ptr (RcCell a)) b) c)] (Weak a))
                     </p>
                     <span>
                         
                     </span>
                     <p class="doc">
-                        <p>updates the <code>cell</code> property of a <code>(Rc a)</code> using a function <code>f</code>.</p>
+                        <p>updates the <code>cell</code> property of a <code>(Weak a)</code> using a function <code>f</code>.</p>
 
                     </p>
                 </div>
                 <div class="binder">
-                    <a class="anchor" href="#value-ref">
-                        <h3 id="value-ref">
-                            value-ref
+                    <a class="anchor" href="#upgrade">
+                        <h3 id="upgrade">
+                            upgrade
                         </h3>
                     </a>
                     <div class="description">
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] (Ref a b))
+                        (Fn [(Ref (Weak a) b)] (Maybe (Rc a)))
                     </p>
                     <pre class="args">
-                        (value-ref rc-ref)
+                        (upgrade w-ref)
                     </pre>
                     <p class="doc">
-                        <p>Borrow the payload in place, without copying.</p>
-<p>The returned reference shares the handle's lifetime. Requires a valid,
-non-expired <code>Rc</code> handle.</p>
+                        <p>Try to obtain a strong reference from a weak one.</p>
+<p>Returns <code>(Maybe.Just rc)</code> if payload is still alive, otherwise <code>Nothing</code>.</p>
 
                     </p>
                 </div>
@@ -519,13 +378,13 @@ non-expired <code>Rc</code> handle.</p>
                         defn
                     </div>
                     <p class="sig">
-                        (Fn [(Ref (Rc a) b)] Long)
+                        (Fn [(Ref (Weak a) b)] Long)
                     </p>
                     <pre class="args">
-                        (weak-count rc-ref)
+                        (weak-count w-ref)
                     </pre>
                     <p class="doc">
-                        <p>Get current weak reference count.</p>
+                        <p>Read current weak count.</p>
 
                     </p>
                 </div>

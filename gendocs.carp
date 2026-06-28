@@ -7,10 +7,10 @@
 (Project.config "docs-url" "https://github.com/carpentry-org/rc")
 (Project.config "docs-styling" "style.css")
 (Project.config "docs-generate-index" true)
-(Project.config "docs-prelude" "Macro-generated single-threaded reference counting with weak references for Carp.
+(Project.config "docs-prelude" "Generic single-threaded reference counting with weak references for Carp.
 
-Use `Rc.define` to create concrete `Rc`/`Weak` pairs for a payload type.
+`(Rc a)` is a transparent generic type, usable directly and in recursive types.
 See `README.md` for usage and `docs/design.md` for implementation details.")
 
-(save-docs Rc Design Testing)
+(save-docs Rc Weak Design Testing)
 (quit)

@@ -23,6 +23,11 @@
                             </a>
                         </li>
                         <li>
+                            <a href="Weak.html">
+                                Weak
+                            </a>
+                        </li>
+                        <li>
                             <a href="Design.html">
                                 Design
                             </a>
@@ -42,18 +47,19 @@
                 <div class="module-description">
                     <p>Design notes for <code>rc</code>.</p>
 <h2>Overview</h2>
-<p><code>Rc.define</code> macro-generates a concrete strong/weak pair for a payload type.
-For example:</p>
-<pre><code>(Rc.define RcString String)
+<p><code>(Rc a)</code> is a transparent generic type: a single allocation holding the payload
+inline in a shared control block. It works directly for any payload type and,
+via the compiler's <code>recursive</code> flag, in recursive types:</p>
+<pre><code>(deftype (Lst a) (Cons [a (Rc (Lst a))]) (Nil []))
 </code></pre>
-<p>This yields:</p>
+<p>Three types make up the library:</p>
 <ul>
-<li><code>RcString</code> (strong handle)</li>
-<li><code>RcStringWeak</code> (weak handle)</li>
-<li>internal <code>RcStringCell</code> with fields <code>strong</code>, <code>weak</code>, <code>value</code> (<code>Ptr T</code>)</li>
+<li><code>(Rc a)</code> (strong handle)</li>
+<li><code>(Weak a)</code> (weak handle)</li>
+<li>internal <code>(RcCell a)</code> with fields <code>strong</code>, <code>weak</code>, <code>live</code>, <code>value</code></li>
 </ul>
-<p>The generated cell type and low-level helper functions are hidden/private and
-not part of the public API.</p>
+<p><code>RcCell</code> and the low-level helpers are hidden/private and not part of the
+public API.</p>
 <h2>Semantics</h2>
 <p>Strong operations:</p>
 <ul>
@@ -74,6 +80,8 @@ not part of the public API.</p>
 <ul>
 <li>payload drops when <code>strong</code> reaches zero</li>
 <li>control block allocation is freed when both counters reach zero</li>
+<li>drops recurse on the C call stack (no drain queue), so very deep, non-log-depth
+<code>Rc</code> chains can overflow it; tree- and log-depth structures are unaffected</li>
 </ul>
 <p>Current behavior:</p>
 <ul>

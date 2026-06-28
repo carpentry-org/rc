@@ -2,21 +2,22 @@
 
 ## Overview
 
-`Rc.define` macro-generates a concrete strong/weak pair for a payload type.
-For example:
+`(Rc a)` is a transparent generic type: a single allocation holding the payload
+inline in a shared control block. It works directly for any payload type and,
+via the compiler's `recursive` flag, in recursive types:
 
 ```
-(Rc.define RcString String)
+(deftype (Lst a) (Cons [a (Rc (Lst a))]) (Nil []))
 ```
 
-This yields:
+Three types make up the library:
 
-- `RcString` (strong handle)
-- `RcStringWeak` (weak handle)
-- internal `RcStringCell` with fields `strong`, `weak`, `value` (`Ptr T`)
+- `(Rc a)` (strong handle)
+- `(Weak a)` (weak handle)
+- internal `(RcCell a)` with fields `strong`, `weak`, `live`, `value`
 
-The generated cell type and low-level helper functions are hidden/private and
-not part of the public API.
+`RcCell` and the low-level helpers are hidden/private and not part of the
+public API.
 
 ## Semantics
 
@@ -39,6 +40,8 @@ Deallocation rule:
 
 - payload drops when `strong` reaches zero
 - control block allocation is freed when both counters reach zero
+- drops recurse on the C call stack (no drain queue), so very deep, non-log-depth
+  `Rc` chains can overflow it; tree- and log-depth structures are unaffected
 
 Current behavior:
 
@@ -68,9 +71,9 @@ Current behavior:
 ## Test suites
 
 - `test/rc.carp`: functional behavior and lifecycle checks
-- `test/rc_fuzz.carp`: state-machine fuzzing for `RcString`
-- `test/rc_fuzz_array_string.carp`: state-machine fuzzing for `RcArrayString`
-- `test/rc_fuzz_probe.carp`: state-machine fuzzing for `RcProbe`
+- `test/rc_fuzz.carp`: state-machine fuzzing for `(Rc String)`
+- `test/rc_fuzz_array_string.carp`: state-machine fuzzing for `(Rc (Array String))`
+- `test/rc_fuzz_probe.carp`: state-machine fuzzing for `(Rc DropProbe)`
 
 ## Sanitizers
 

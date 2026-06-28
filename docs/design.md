@@ -30,8 +30,6 @@ For payload type `T`, the generated cell shape is:
 (deftype RcTCell
   [strong Long
    weak Long
-   owner-thread Long
-   magic Long
    live Bool
    value T])
 ```
@@ -40,8 +38,6 @@ Meaning:
 
 - `strong`: number of live strong handles
 - `weak`: number of live weak handles
-- `owner-thread`: thread id captured at allocation; used for single-thread guardrails
-- `magic`: integrity tag used to reject forged/corrupt control blocks
 - `live`: `true` while the payload is present, `false` after it is dropped or moved out
 - `value`: the payload, stored inline in the cell
 
@@ -116,8 +112,6 @@ Core runtime invariants:
 
 - `strong >= 0`
 - `weak >= 0`
-- `magic == Rc.cell-magic-live` while the control block is alive
-- all public operations on non-null handles must run on `owner-thread`
 - upgraded weak must observe `strong > 0` before incrementing
 - if `strong == 0` and `weak == 0`, cell must be freed exactly once
 - no operation may decrement below zero
@@ -159,19 +153,16 @@ Current non-goals:
 - no lock-free semantics
 
 Because counters are non-atomic, this implementation is only valid in a
-single-threaded context. Runtime checks enforce this by aborting on
-cross-thread access to a live control block. These checks (the
-owner-thread guard and the control-block magic check) follow C `assert`
-semantics: they compile out when `NDEBUG` is defined, which
-`carp --optimize` does, so release builds carry no per-access check
-overhead. Debug builds keep full checking.
+single-threaded context (Carp is single-threaded). The refcount
+overflow/underflow guards follow C `assert` semantics: they compile out
+when `NDEBUG` is defined, which `carp --optimize` does, so release builds
+carry no per-operation check overhead. Debug builds keep full checking.
 
 Handle validity contract:
 
 - public APIs assume handles were created by `Rc.new`, `Rc.clone`, `Rc.downgrade`,
   or `Weak.upgrade`
 - forging handles with `Unsafe.coerce` is out of contract
-- invalid/forged pointers are rejected by control-block magic checks when readable
 - refcount overflow/underflow aborts immediately via fail-fast guards
 
 Important for any future atomic/thread-safe port:

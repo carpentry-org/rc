@@ -3,7 +3,6 @@
 (load "fuzz_harness.carp")
 (load "../rc.carp")
 
-(Rc.define RcString String)
 
 (FuzzHarness.configure-build)
 
@@ -51,10 +50,10 @@
         DEFAULT-FUZZ-BASE-SEED)))
 
 (defn rc-none []
-  (the (Maybe RcString) (Maybe.Nothing)))
+  (the (Maybe (Rc String)) (Maybe.Nothing)))
 
 (defn weak-none []
-  (the (Maybe RcStringWeak) (Maybe.Nothing)))
+  (the (Maybe (Weak String)) (Maybe.Nothing)))
 
 (defn random-rc-index [rcs]
   (Int.random-between 0 (Array.length rcs)))
@@ -69,13 +68,13 @@
 
 (defn op-new-rc [rcs]
   (let [i (random-rc-index rcs)]
-    (aset! rcs i (Maybe.Just (RcString.new (random-payload))))))
+    (aset! rcs i (Maybe.Just (Rc.new (random-payload))))))
 
 (defn op-clone-rc [rcs]
   (let [src (random-rc-index rcs)
         dst (random-rc-index rcs)]
     (match @(Array.unsafe-nth rcs src)
-      (Maybe.Just rc) (aset! rcs dst (Maybe.Just (RcString.clone &rc)))
+      (Maybe.Just rc) (aset! rcs dst (Maybe.Just (Rc.clone &rc)))
       (Maybe.Nothing) ())))
 
 (defn op-drop-rc [rcs]
@@ -86,14 +85,14 @@
   (let [src (random-rc-index rcs)
         dst (random-weak-index wks)]
     (match @(Array.unsafe-nth rcs src)
-      (Maybe.Just rc) (aset! wks dst (Maybe.Just (RcString.downgrade &rc)))
+      (Maybe.Just rc) (aset! wks dst (Maybe.Just (Rc.downgrade &rc)))
       (Maybe.Nothing) ())))
 
 (defn op-clone-weak [wks]
   (let [src (random-weak-index wks)
         dst (random-weak-index wks)]
     (match @(Array.unsafe-nth wks src)
-      (Maybe.Just w) (aset! wks dst (Maybe.Just (RcStringWeak.clone &w)))
+      (Maybe.Just w) (aset! wks dst (Maybe.Just (Weak.clone &w)))
       (Maybe.Nothing) ())))
 
 (defn op-drop-weak [wks]
@@ -102,14 +101,14 @@
 
 (defn op-new-weak [wks]
   (let [i (random-weak-index wks)]
-    (aset! wks i (Maybe.Just (RcStringWeak.new)))))
+    (aset! wks i (Maybe.Just (Weak.new)))))
 
 (defn op-upgrade [rcs wks]
   (let [src (random-weak-index wks)
         dst (random-rc-index rcs)]
     (match @(Array.unsafe-nth wks src)
       (Maybe.Just w)
-        (match (RcStringWeak.upgrade &w)
+        (match (Weak.upgrade &w)
           (Maybe.Just rc) (aset! rcs dst (Maybe.Just rc))
           (Maybe.Nothing) ())
       (Maybe.Nothing) ())))
@@ -120,7 +119,7 @@
       &(fn [slot]
         (match slot
           (Maybe.Nothing) (rc-none)
-          (Maybe.Just rc) (Maybe.Just (RcString.make-unique rc)))))))
+          (Maybe.Just rc) (Maybe.Just (Rc.make-unique rc)))))))
 
 (defn op-try-unwrap [rcs]
   (let [i (random-rc-index rcs)]
@@ -129,7 +128,7 @@
         (match slot
           (Maybe.Nothing) (rc-none)
           (Maybe.Just rc)
-            (match (RcString.try-unwrap rc)
+            (match (Rc.try-unwrap rc)
               (Result.Success value)
                 (do
                   (ignore value)
@@ -143,7 +142,7 @@
     (match @(Array.unsafe-nth rcs i)
       (Maybe.Just a)
         (match @(Array.unsafe-nth rcs j)
-          (Maybe.Just b) (ignore (RcString.ptr-eq &a &b))
+          (Maybe.Just b) (ignore (Rc.ptr-eq &a &b))
           (Maybe.Nothing) ())
       (Maybe.Nothing) ())))
 
@@ -153,7 +152,7 @@
     (match @(Array.unsafe-nth wks i)
       (Maybe.Just a)
         (match @(Array.unsafe-nth wks j)
-          (Maybe.Just b) (ignore (RcStringWeak.ptr-eq &a &b))
+          (Maybe.Just b) (ignore (Weak.ptr-eq &a &b))
           (Maybe.Nothing) ())
       (Maybe.Nothing) ())))
 
@@ -165,7 +164,7 @@
           (Maybe.Nothing) (rc-none)
           (Maybe.Just rc)
             (do
-              (ignore (RcString.unwrap-or-clone rc))
+              (ignore (Rc.unwrap-or-clone rc))
               (rc-none)))))))
 
 (defn op-clone-burst [rcs]
@@ -175,7 +174,7 @@
         (for [i 0 3]
           (do
             (ignore i)
-            (aset! rcs (random-rc-index rcs) (Maybe.Just (RcString.clone &rc)))))
+            (aset! rcs (random-rc-index rcs) (Maybe.Just (Rc.clone &rc)))))
       (Maybe.Nothing) ())))
 
 (defn op-downgrade-burst [rcs wks]
@@ -185,7 +184,7 @@
         (for [i 0 3]
           (do
             (ignore i)
-            (aset! wks (random-weak-index wks) (Maybe.Just (RcString.downgrade &rc)))))
+            (aset! wks (random-weak-index wks) (Maybe.Just (Rc.downgrade &rc)))))
       (Maybe.Nothing) ())))
 
 (defn op-clear-rcs [rcs]
@@ -211,9 +210,9 @@
           (match slot
             (Maybe.Nothing) (rc-none)
             (Maybe.Just rc)
-              (if (= (RcString.strong-count &rc) 1l)
+              (if (= (Rc.strong-count &rc) 1l)
                 (do
-                  (ignore (RcString.unwrap rc))
+                  (ignore (Rc.unwrap rc))
                   (rc-none))
                 (Maybe.Just rc))))))))
 
@@ -246,18 +245,18 @@
       (Maybe.Nothing) ()
       (Maybe.Just rc)
         (do
-          (let [sc (RcString.strong-count &rc)]
+          (let [sc (Rc.strong-count &rc)]
             (assert (> sc 0l))
-            (assert (= (RcString.unique? &rc) (= sc 1l))))
-          (let [w (RcString.downgrade &rc)
-                sc-before (RcString.strong-count &rc)]
+            (assert (= (Rc.unique? &rc) (= sc 1l))))
+          (let [w (Rc.downgrade &rc)
+                sc-before (Rc.strong-count &rc)]
             (do
-              (assert (>= (RcStringWeak.weak-count &w) 1l))
-              (match (RcStringWeak.upgrade &w)
+              (assert (>= (Weak.weak-count &w) 1l))
+              (match (Weak.upgrade &w)
                 (Maybe.Just rc2)
                   (do
-                    (assert (RcString.ptr-eq &rc &rc2))
-                    (assert (= (RcString.strong-count &rc2) (Long.inc sc-before))))
+                    (assert (Rc.ptr-eq &rc &rc2))
+                    (assert (= (Rc.strong-count &rc2) (Long.inc sc-before))))
                 (Maybe.Nothing) (assert false))))))))
 
 (defn check-weak-invariants [wks]
@@ -265,25 +264,25 @@
     (match @(Array.unsafe-nth wks i)
       (Maybe.Nothing) ()
       (Maybe.Just w)
-        (let [wc (RcStringWeak.weak-count &w)
-              sc-before (RcStringWeak.strong-count &w)]
+        (let [wc (Weak.weak-count &w)
+              sc-before (Weak.strong-count &w)]
           (do
             (if (= wc 0l)
               (do
                 (assert (= sc-before 0l))
-                (assert (Maybe.nothing? &(RcStringWeak.upgrade &w))))
+                (assert (Maybe.nothing? &(Weak.upgrade &w))))
               (do
                 (assert (>= wc 1l))
-                (match (RcStringWeak.upgrade &w)
+                (match (Weak.upgrade &w)
                   (Maybe.Just rc)
                     (do
                       (assert (> sc-before 0l))
-                      (assert (= (RcString.strong-count &rc) (Long.inc sc-before))))
+                      (assert (= (Rc.strong-count &rc) (Long.inc sc-before))))
                   (Maybe.Nothing)
                     (assert (= sc-before 0l)))))
-            (assert (= (RcStringWeak.alive? &w) (not (RcStringWeak.expired? &w))))
-            (assert (= (RcStringWeak.expired? &w)
-                       (= (RcStringWeak.strong-count &w) 0l))))))))
+            (assert (= (Weak.alive? &w) (not (Weak.expired? &w))))
+            (assert (= (Weak.expired? &w)
+                       (= (Weak.strong-count &w) 0l))))))))
 
 (defn check-rc-pair-invariants [rcs]
   (let [n (Array.length rcs)]
@@ -294,11 +293,11 @@
             (Maybe.Just a)
               (match @(Array.unsafe-nth rcs j)
                 (Maybe.Just b)
-                  (if (RcString.ptr-eq &a &b)
+                  (if (Rc.ptr-eq &a &b)
                     (do
-                      (assert (= (RcString.strong-count &a) (RcString.strong-count &b)))
-                      (assert (= (RcString.weak-count &a) (RcString.weak-count &b)))
-                      (assert (>= (RcString.strong-count &a) 2l)))
+                      (assert (= (Rc.strong-count &a) (Rc.strong-count &b)))
+                      (assert (= (Rc.weak-count &a) (Rc.weak-count &b)))
+                      (assert (>= (Rc.strong-count &a) 2l)))
                     ())
                 (Maybe.Nothing) ())
             (Maybe.Nothing) ())
@@ -313,13 +312,13 @@
             (Maybe.Just a)
               (match @(Array.unsafe-nth wks j)
                 (Maybe.Just b)
-                  (if (RcStringWeak.ptr-eq &a &b)
+                  (if (Weak.ptr-eq &a &b)
                     (do
-                      (assert (= (RcStringWeak.strong-count &a) (RcStringWeak.strong-count &b)))
-                      (assert (= (RcStringWeak.weak-count &a) (RcStringWeak.weak-count &b)))
-                      (let [wc (RcStringWeak.weak-count &a)]
+                      (assert (= (Weak.strong-count &a) (Weak.strong-count &b)))
+                      (assert (= (Weak.weak-count &a) (Weak.weak-count &b)))
+                      (let [wc (Weak.weak-count &a)]
                         (if (= wc 0l)
-                          (assert (= (RcStringWeak.strong-count &a) 0l))
+                          (assert (= (Weak.strong-count &a) 0l))
                           (assert (>= wc 2l)))))
                     ())
                 (Maybe.Nothing) ())
@@ -331,16 +330,16 @@
     (match @(Array.unsafe-nth rcs i)
       (Maybe.Nothing) ()
       (Maybe.Just rc)
-        (let [w (RcString.downgrade &rc)]
+        (let [w (Rc.downgrade &rc)]
           (for [j 0 (Array.length wks)]
             (match @(Array.unsafe-nth wks j)
               (Maybe.Nothing) ()
               (Maybe.Just wk)
-                (if (RcStringWeak.ptr-eq &w &wk)
+                (if (Weak.ptr-eq &w &wk)
                   (do
-                    (assert (= (RcString.strong-count &rc) (RcStringWeak.strong-count &wk)))
-                    (assert (= (RcString.weak-count &rc) (RcStringWeak.weak-count &wk)))
-                    (assert (not (RcStringWeak.expired? &wk))))
+                    (assert (= (Rc.strong-count &rc) (Weak.strong-count &wk)))
+                    (assert (= (Rc.weak-count &rc) (Weak.weak-count &wk)))
+                    (assert (not (Weak.expired? &wk))))
                   ())))))))
 
 (defn check-invariants [rcs wks]

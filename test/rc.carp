@@ -3,13 +3,6 @@
 (load "fuzz_harness.carp")
 (load "../rc.carp")
 
-;; Instantiate a concrete Rc specialization for strings.
-(Rc.define RcString String)
-(Rc.define RcInt Int)
-(Rc.define RcArrayString (Array String))
-
-(deftype FakeRcStringCell [strong Long weak Long owner-thread Long magic Long live Bool value String])
-
 (deftype DropProbe [id Int])
 
 (defmodule DropProbe
@@ -38,19 +31,16 @@
     (ignore (counter-op 1)))
   (implements delete DropProbe.delete))
 
-(Rc.define RcProbe DropProbe)
-
-(register-type RcLink "void*")
-(deftype LinkNode [next (Maybe RcLink)])
-(Rc.define RcLink LinkNode)
+; A generic recursive type that indirects through Rc.
+(deftype LinkNode [next (Maybe (Rc LinkNode))])
 
 (defn build-link-chain [n]
-  (let-do [link (the (Maybe RcLink) (Maybe.Nothing))]
+  (let-do [link (the (Maybe (Rc LinkNode)) (Maybe.Nothing))]
     (for [i 0 n]
-      (set! link (Maybe.Just (RcLink.new (LinkNode.init link)))))
+      (set! link (Maybe.Just (Rc.new (LinkNode.init link)))))
     link))
 
-(defn deep-chain-lifecycle []
+(defn chain-lifecycle []
   (let [chain (build-link-chain 100000)]
     (ignore chain)))
 
@@ -63,263 +53,255 @@
     (assert-equal state expected-balance (Debug.memory-balance) descr)))
 
 (defn rc-lifecycle []
-  (let [a (RcString.new @"hello")
-        b (RcString.clone &a)
-        c (RcString.clone &b)]
+  (let [a (Rc.new @"hello")
+        b (Rc.clone &a)
+        c (Rc.clone &b)]
     (do
-      (ignore (RcString.get &a))
-      (ignore (RcString.get &b))
-      (ignore (RcString.get &c)))))
+      (ignore (Rc.get &a))
+      (ignore (Rc.get &b))
+      (ignore (Rc.get &c)))))
 
 (defn rc-try-unwrap-success-lifecycle []
-  (let [r (RcString.try-unwrap (RcString.new @"unwrap-me"))]
+  (let [r (Rc.try-unwrap (Rc.new @"unwrap-me"))]
     (match r
       (Result.Success s) (ignore s)
       (Result.Error rc) (ignore rc))))
 
 (defn rc-make-unique-lifecycle []
-  (let [a (RcString.new @"hello")
-        b (RcString.clone &a)
-        c (RcString.make-unique b)]
+  (let [a (Rc.new @"hello")
+        b (Rc.clone &a)
+        c (Rc.make-unique b)]
     (do
       (ignore a)
       (ignore c))))
 
 (defn rc-weak-lifecycle []
-  (let [w (let [a (RcString.new @"hello")
-                w0 (RcString.downgrade &a)]
+  (let [w (let [a (Rc.new @"hello")
+                w0 (Rc.downgrade &a)]
             w0)]
-    (ignore (RcStringWeak.upgrade &w))))
+    (ignore (Weak.upgrade &w))))
 
 (defn rc-weak-upgrade-lifecycle []
-  (let [a (RcString.new @"hello")
-        w (RcString.downgrade &a)]
-    (match (RcStringWeak.upgrade &w)
+  (let [a (Rc.new @"hello")
+        w (Rc.downgrade &a)]
+    (match (Weak.upgrade &w)
       (Maybe.Just rc) (ignore rc)
       (Maybe.Nothing) ())))
 
 (defn rc-weak-new-lifecycle []
-  (let [w (RcStringWeak.new)
-        w2 (RcStringWeak.clone &w)]
+  (let [w (the (Weak String) (Weak.new))
+        w2 (Weak.clone &w)]
     (do
-      (ignore (RcStringWeak.upgrade &w))
+      (ignore (Weak.upgrade &w))
       (ignore w2))))
 
 (deftest test
   (assert-equal test
     1l
-    (let [a (RcString.new @"x")]
-      (RcString.strong-count &a))
+    (let [a (Rc.new @"x")]
+      (Rc.strong-count &a))
     "new starts with strong count 1")
 
   (assert-equal test
     3l
-    (let [a (RcString.new @"x")
+    (let [a (Rc.new @"x")
           b @&a
           c @&a]
-      (RcString.strong-count &a))
+      (Rc.strong-count &a))
     "copy/clone increments strong count")
 
   (assert-equal test
     1l
-    (let [a (RcString.new @"x")]
+    (let [a (Rc.new @"x")]
       (do
         (let [b @&a]
           (ignore b))
-        (RcString.strong-count &a)))
+        (Rc.strong-count &a)))
     "dropping a clone decrements strong count")
 
   (assert-equal test
     5
-    (let [a (RcString.new @"hello")]
-      (String.length &(RcString.get &a)))
+    (let [a (Rc.new @"hello")]
+      (String.length &(Rc.get &a)))
     "get copies out the inner value")
 
   (assert-equal test
     true
-    (let [a (RcString.new @"hello")
-          b (RcString.clone &a)]
+    (let [a (Rc.new @"hello")
+          b (Rc.clone &a)]
       (do
         (ignore b)
-        (RcString.unique? &a)))
+        (Rc.unique? &a)))
     "unique? reports true once clones are dropped")
 
   (assert-equal test
     true
-    (let [a (RcString.new @"same")
-          b (RcString.clone &a)]
-      (RcString.ptr-eq &a &b))
+    (let [a (Rc.new @"same")
+          b (Rc.clone &a)]
+      (Rc.ptr-eq &a &b))
     "ptr-eq is true for clones")
 
   (assert-equal test
     false
-    (let [a (RcString.new @"left")
-          b (RcString.new @"right")]
-      (RcString.ptr-eq &a &b))
+    (let [a (Rc.new @"left")
+          b (Rc.new @"right")]
+      (Rc.ptr-eq &a &b))
     "ptr-eq is false for distinct allocations")
 
   (assert-equal test
     5
-    (match (RcString.try-unwrap (RcString.new @"hello"))
+    (match (Rc.try-unwrap (Rc.new @"hello"))
       (Result.Success s) (String.length &s)
       (Result.Error _) -1)
     "try-unwrap extracts value when unique")
 
   (assert-equal test
     2l
-    (let [a (RcString.new @"hello")
-          b (RcString.clone &a)]
-      (match (RcString.try-unwrap b)
+    (let [a (Rc.new @"hello")
+          b (Rc.clone &a)]
+      (match (Rc.try-unwrap b)
         (Result.Success _) -1l
-        (Result.Error rc) (RcString.strong-count &rc)))
+        (Result.Error rc) (Rc.strong-count &rc)))
     "try-unwrap keeps the original Rc on failure")
 
   (assert-equal test
     7
-    (let [a (RcString.new @"shared!")
-          b (RcString.clone &a)]
-      (String.length &(RcString.unwrap-or-clone b)))
+    (let [a (Rc.new @"shared!")
+          b (Rc.clone &a)]
+      (String.length &(Rc.unwrap-or-clone b)))
     "unwrap-or-clone copies payload when shared")
 
   (assert-equal test
     true
-    (let [a (RcString.new @"x")
-          b (RcString.clone &a)
-          b2 (RcString.make-unique b)]
-      (and (= 1l (RcString.strong-count &a))
-           (= 1l (RcString.strong-count &b2))
-           (not (RcString.ptr-eq &a &b2))))
+    (let [a (Rc.new @"x")
+          b (Rc.clone &a)
+          b2 (Rc.make-unique b)]
+      (and (= 1l (Rc.strong-count &a))
+           (= 1l (Rc.strong-count &b2))
+           (not (Rc.ptr-eq &a &b2))))
     "make-unique detaches from shared allocation")
 
   (assert-equal test
     6
-    (String.length &(RcString.unwrap (RcString.new @"unwrap")))
+    (String.length &(Rc.unwrap (Rc.new @"unwrap")))
     "unwrap extracts value when unique")
 
   (assert-equal test
     1l
-    (let [a (RcString.new @"weak")
-          w (RcString.downgrade &a)]
-      (RcString.weak-count &a))
+    (let [a (Rc.new @"weak")
+          w (Rc.downgrade &a)]
+      (Rc.weak-count &a))
     "downgrade increments weak count")
 
   (assert-equal test
     2l
-    (let [a (RcString.new @"weak")
-          w1 (RcString.downgrade &a)
+    (let [a (Rc.new @"weak")
+          w1 (Rc.downgrade &a)
           w2 @&w1]
-      (RcStringWeak.weak-count &w2))
+      (Weak.weak-count &w2))
     "copy/clone increments weak count")
 
   (assert-equal test
     true
-    (let [w (RcStringWeak.new)]
-      (RcStringWeak.expired? &w))
+    (let [w (the (Weak String) (Weak.new))]
+      (Weak.expired? &w))
     "weak.new starts expired")
 
   (assert-equal test
     false
-    (let [w (RcStringWeak.new)]
-      (RcStringWeak.alive? &w))
+    (let [w (the (Weak String) (Weak.new))]
+      (Weak.alive? &w))
     "weak.new starts not alive")
 
   (assert-equal test
     true
-    (let [w (RcStringWeak.new)]
-      (Maybe.nothing? &(RcStringWeak.upgrade &w)))
+    (let [w (the (Weak String) (Weak.new))]
+      (Maybe.nothing? &(Weak.upgrade &w)))
     "weak.new upgrade returns Nothing")
 
   (assert-equal test
     0l
-    (let [w (RcStringWeak.new)]
-      (RcStringWeak.strong-count &w))
+    (let [w (the (Weak String) (Weak.new))]
+      (Weak.strong-count &w))
     "weak.new has strong count 0")
 
   (assert-equal test
     0l
-    (let [w (RcStringWeak.new)]
-      (RcStringWeak.weak-count &w))
+    (let [w (the (Weak String) (Weak.new))]
+      (Weak.weak-count &w))
     "weak.new has weak count 0")
 
   (assert-equal test
     true
-    (let [a (RcString.new @"weak")
-          w (RcString.downgrade &a)]
-      (match (RcStringWeak.upgrade &w)
-        (Maybe.Just rc2) (RcString.ptr-eq &a &rc2)
+    (let [a (Rc.new @"weak")
+          w (Rc.downgrade &a)]
+      (match (Weak.upgrade &w)
+        (Maybe.Just rc2) (Rc.ptr-eq &a &rc2)
         (Maybe.Nothing) false))
     "weak upgrade succeeds while strong refs exist")
 
   (assert-equal test
     true
-    (let [a (RcString.new @"weak-live")
-          w (RcString.downgrade &a)]
-      (RcStringWeak.alive? &w))
+    (let [a (Rc.new @"weak-live")
+          w (Rc.downgrade &a)]
+      (Weak.alive? &w))
     "weak alive? is true while strong refs exist")
 
   (assert-equal test
     true
-    (let [w (let [a (RcString.new @"gone")]
-              (RcString.downgrade &a))]
-      (RcStringWeak.expired? &w))
+    (let [w (let [a (Rc.new @"gone")]
+              (Rc.downgrade &a))]
+      (Weak.expired? &w))
     "weak reports expired after last strong is dropped")
 
   (assert-equal test
     false
-    (let [w (let [a (RcString.new @"gone")]
-              (RcString.downgrade &a))]
-      (RcStringWeak.alive? &w))
+    (let [w (let [a (Rc.new @"gone")]
+              (Rc.downgrade &a))]
+      (Weak.alive? &w))
     "weak alive? is false after last strong is dropped")
 
   (assert-equal test
     true
-    (let [a (RcString.new @"weak-complement")
-          w (RcString.downgrade &a)]
-      (= (RcStringWeak.alive? &w) (not (RcStringWeak.expired? &w))))
+    (let [a (Rc.new @"weak-complement")
+          w (Rc.downgrade &a)]
+      (= (Weak.alive? &w) (not (Weak.expired? &w))))
     "weak alive? and expired? are complements while alive")
 
   (assert-equal test
     true
-    (let [w (let [a (RcString.new @"weak-complement-gone")]
-              (RcString.downgrade &a))]
-      (= (RcStringWeak.alive? &w) (not (RcStringWeak.expired? &w))))
+    (let [w (let [a (Rc.new @"weak-complement-gone")]
+              (Rc.downgrade &a))]
+      (= (Weak.alive? &w) (not (Weak.expired? &w))))
     "weak alive? and expired? are complements after expiration")
 
   (assert-equal test
     true
-    (let [w (let [a (RcString.new @"gone")]
-              (RcString.downgrade &a))]
-      (Maybe.nothing? &(RcStringWeak.upgrade &w)))
+    (let [w (let [a (Rc.new @"gone")]
+              (Rc.downgrade &a))]
+      (Maybe.nothing? &(Weak.upgrade &w)))
     "weak upgrade returns Nothing after expiration")
-
-  (assert-signal test
-    System.signal-abort
-    (fn []
-      (let [fake-ptr (Pointer.unsafe-alloc (FakeRcStringCell.init 1l 0l 0l 0l true @"forged"))
-            fake-rc (the RcString (Unsafe.coerce fake-ptr))]
-        (ignore (RcString.strong-count &fake-rc))))
-    "forged Rc handle aborts on control-block magic mismatch")
 
   (assert-equal test
     true
-    (let [w (let [a (RcString.new @"unwrap-weak")
-                  w0 (RcString.downgrade &a)
-                  v (RcString.unwrap a)]
+    (let [w (let [a (Rc.new @"unwrap-weak")
+                  w0 (Rc.downgrade &a)
+                  v (Rc.unwrap a)]
               (do
                 (ignore v)
                 w0))]
-      (Maybe.nothing? &(RcStringWeak.upgrade &w)))
+      (Maybe.nothing? &(Weak.upgrade &w)))
     "unwrap on last strong expires existing weak refs")
 
   (assert-equal test
     1
     (do
       (DropProbe.reset-drops!)
-      (let [w (let [a (RcProbe.new (DropProbe.init 1))
-                    w0 (RcProbe.downgrade &a)]
+      (let [w (let [a (Rc.new (DropProbe.init 1))
+                    w0 (Rc.downgrade &a)]
                 w0)]
         (do
-          (assert (RcProbeWeak.expired? &w))
+          (assert (Weak.expired? &w))
           (DropProbe.drops))))
     "payload drops at strong-zero while weak refs remain")
 
@@ -327,8 +309,8 @@
     1
     (do
       (DropProbe.reset-drops!)
-      (let [w (let [a (RcProbe.new (DropProbe.init 2))
-                    w0 (RcProbe.downgrade &a)]
+      (let [w (let [a (Rc.new (DropProbe.init 2))
+                    w0 (Rc.downgrade &a)]
                 w0)]
         (ignore w))
       (DropProbe.drops))
@@ -338,7 +320,7 @@
     1
     (do
       (DropProbe.reset-drops!)
-      (match (RcProbe.try-unwrap (RcProbe.new (DropProbe.init 3)))
+      (match (Rc.try-unwrap (Rc.new (DropProbe.init 3)))
         (Result.Success value) (ignore value)
         (Result.Error rc) (ignore rc))
       (DropProbe.drops))
@@ -348,22 +330,22 @@
     1
     (do
       (DropProbe.reset-drops!)
-      (ignore (RcProbe.unwrap (RcProbe.new (DropProbe.init 4))))
+      (ignore (Rc.unwrap (Rc.new (DropProbe.init 4))))
       (DropProbe.drops))
     "unwrap unique path moves payload without double delete")
 
   (assert-equal test
     2l
-    (let [a (RcInt.new 41)
-          b (RcInt.clone &a)]
-      (RcInt.strong-count &b))
-    "Rc.define works for non-managed payloads")
+    (let [a (Rc.new 41)
+          b (Rc.clone &a)]
+      (Rc.strong-count &b))
+    "Rc works for non-managed payloads")
 
   (assert-equal test
     2
-    (let [a (RcArrayString.new [@"a" @"b"])]
-      (Array.length &(RcArrayString.get &a)))
-    "Rc.define works for managed composite payloads")
+    (let [a (Rc.new [@"a" @"b"])]
+      (Array.length &(Rc.get &a)))
+    "Rc works for managed composite payloads")
 
   (assert-memory-balance test rc-lifecycle 0l "Rc clone/drop lifecycle is balanced")
   (assert-memory-balance test rc-try-unwrap-success-lifecycle 0l "Rc try-unwrap success is balanced")
@@ -379,5 +361,5 @@
         (Maybe.Just _) true
         (Maybe.Nothing) false))
     "dropping a 100k-deep Rc chain does not blow the C stack")
-  (assert-memory-balance test deep-chain-lifecycle 0l "100k-deep Rc chain destruction is balanced")
+  (assert-memory-balance test chain-lifecycle 0l "100k-deep Rc chain destruction is balanced")
 )
