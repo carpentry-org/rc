@@ -248,7 +248,7 @@
       (Maybe.Nothing) ()
       (Maybe.Just rc)
         (do
-          (let [sc (Rc.strong-count &rc)]
+          (let-do [sc (Rc.strong-count &rc)]
             (assert (> sc 0l))
             (assert (= (Rc.unique? &rc) (= sc 1l))))
           (let [w (Rc.downgrade &rc)
