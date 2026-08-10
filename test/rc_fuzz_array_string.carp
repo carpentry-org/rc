@@ -244,21 +244,21 @@
 
 (defn check-rc-invariants [rcs]
   (for [i 0 (Array.length rcs)]
-    (match @(Array.unsafe-nth rcs i)
+    (match-ref (Array.unsafe-nth rcs i)
       (Maybe.Nothing) ()
       (Maybe.Just rc)
         (do
-          (let [sc (Rc.strong-count &rc)]
+          (let-do [sc (Rc.strong-count rc)]
             (assert (> sc 0l))
-            (assert (= (Rc.unique? &rc) (= sc 1l))))
-          (let [w (Rc.downgrade &rc)
-                sc-before (Rc.strong-count &rc)]
+            (assert (= (Rc.unique? rc) (= sc 1l))))
+          (let [w (Rc.downgrade rc)
+                sc-before (Rc.strong-count rc)]
             (do
               (assert (>= (Weak.weak-count &w) 1l))
               (match (Weak.upgrade &w)
                 (Maybe.Just rc2)
                   (do
-                    (assert (Rc.ptr-eq &rc &rc2))
+                    (assert (Rc.ptr-eq rc &rc2))
                     (assert (= (Rc.strong-count &rc2) (Long.inc sc-before))))
                 (Maybe.Nothing) (assert false))))))))
 
