@@ -49,7 +49,7 @@ Project structure:
 Load from a git source in Carp's standard library-loading style:
 
 ```clojure
-(load "git@github.com:carpentry-org/rc@0.2.0")
+(load "git@github.com:carpentry-org/rc@0.3.1")
 ```
 
 Use release tags when possible for reproducible builds.
